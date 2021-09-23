@@ -1,0 +1,15 @@
+# windows compiler output formats
+*.exe
+*.dll
+*.so
+*.obj
+*.ilk
+*.pdb
+*.exp
+*.lib
+
+# local directories
+.vscode/
+build/
+local/
+log/
