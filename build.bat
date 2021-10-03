@@ -10,7 +10,7 @@ pushd %~dp0
 mkdir .\build
 pushd .\build
 del .\*.dll .\*.exe .\*.exp .\*.ilk .\*lib .\*.obj .\*.pdb
-cl -EHsc %COMPILER_FLAGS% %SRC% /link %LINKER_FLAGS%
+cl -O2 %COMPILER_FLAGS% %SRC% /link %LINKER_FLAGS%
 popd
 popd
 

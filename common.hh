@@ -67,6 +67,8 @@ typedef size_t		usize;
 // common macros
 #define NARRAY(arr) (sizeof(arr)/sizeof((arr)[0]))
 #define IS_POWER_OF_TWO(x) (((x) != 0) && (((x) & ((x) - 1)) == 0))
+#define BITS_TO_BYTES(x) (((x) + 7) / 8)
+#define BYTES_TO_BITS(x) (8 * (x))
 
 // TODO: logging
 #include <stdio.h>
@@ -93,8 +95,45 @@ void blake2b_update(blake2b_state *S, u8 *in, u64 inlen);
 void blake2b_final(blake2b_state *S, u8 *out, u64 outlen);
 
 // ----------------------------------------------------------------
-// Zhash = Equihash (N = 144, K = 5)
+// BitcoinZ = Equihash (N = 144, K = 5)
 // ----------------------------------------------------------------
-#define BTCZ_BLAKE_OUTLEN 54
+
+// TODO: Add notes on how equihash works and how these defines
+// are calculated.
+
+#define BTCZ_EH_N				144
+#define BTCZ_EH_K				5
+
+#define BTCZ_HASH_BYTES			18	// == BITS_TO_BYTES(BTCZ_EH_N)
+#define BTCZ_HASHES_PER_BLAKE	3	// == BLAKE2B_OUTBYTES / BTCZ_HASH_BYTES
+#define BTCZ_BLAKE_OUTLEN		54	// == BTCZ_HASHES_PER_BLAKE * BTCZ_HASH_BYTES
+#define BTCZ_HASH_DIGIT_BITS	24	// == BTCZ_EH_N / (BTCZ_EH_K + 1)
+#define BTCZ_HASH_DIGIT_BYTES	3	// == BITS_TO_BYTES(BTCZ_HASH_DIGIT_BITS)
+#define BTCZ_HASH_DIGITS		6	// == BTCZ_EH_K + 1
+
+#define BTCZ_PROOF_INDEX_BITS	25	// == BTCZ_HASH_DIGIT_BITS + 1
+#define BTCZ_PROOF_INDICES		32	// == 1 << BTCZ_EH_K
+#define BTCZ_PACKED_PROOF_BYTES	100	// == BITS_TO_BYTES(BTCZ_PROOF_INDEX_BITS * BTCZ_PROOF_INDICES)
+
+#define BTCZ_DOMAIN				(1 << 25) // == 1 << BTCZ_PROOF_INDEX_BITS
+
+// NOTE: PartialJoin is meant to be used for the first (BTCZ_HASH_DIGITS - 2)
+// digits. FinalJoin is meant to be used for the last two digits. See the equihash
+// algorithm description in `equihash.cc` for more info.
+struct PartialJoin{
+	// TODO: Both hash_digits and indices can be packed on the same
+	// array. This could lead to using dynamic memory instead of a
+	// static size.
+
+	i32 num_hash_digits;
+	u32 hash_digits[BTCZ_HASH_DIGITS];
+
+	i32 num_indices;
+	u32 indices[BTCZ_PROOF_INDICES / 2];
+};
+
+struct FinalJoin{
+	u32 indices[BTCZ_PROOF_INDICES];
+};
 
 #endif //COMMON_HH_
