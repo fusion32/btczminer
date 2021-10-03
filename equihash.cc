@@ -297,7 +297,7 @@ int main(int argc, char **argv){
 	hex_to_buffer_le(nonce_hex, block_header.nonce.data, 32);
 	init_state(&base_state, &block_header);
 
-	//equihash_solve(&base_state);
+	equihash_solve(&base_state);
 
 	u8 solution[100];
 	hex_to_buffer(solution_hex, solution, 100);
@@ -468,11 +468,13 @@ bool partial_distinct_indices(PartialJoin *p1, PartialJoin *p2){
 PartialJoin partial_join(PartialJoin *p1, PartialJoin *p2){
 	DEBUG_ASSERT(p1->num_hash_digits == p2->num_hash_digits);
 	DEBUG_ASSERT(p1->num_indices == p2->num_indices);
+	DEBUG_ASSERT(p1->num_hash_digits > 0 && p1->num_indices > 0);
+	DEBUG_ASSERT(p1->indices[0] != p2->indices[0]);
 
 	i32 num_hash_digits = p1->num_hash_digits - 1;
 	i32 prev_num_indices = p1->num_indices;
 	i32 num_indices = prev_num_indices * 2;
-	DEBUG_ASSERT(num_indices <= BTCZ_PROOF_INDICES / 2);
+	DEBUG_ASSERT(num_indices > 0 && num_indices <= (BTCZ_PROOF_INDICES / 2));
 
 	PartialJoin result;
 
@@ -501,6 +503,8 @@ PartialJoin partial_join(PartialJoin *p1, PartialJoin *p2){
 FinalJoin final_join(PartialJoin *p1, PartialJoin *p2){
 	DEBUG_ASSERT(p1->num_hash_digits == p2->num_hash_digits);
 	DEBUG_ASSERT(p1->num_indices == p2->num_indices);
+	DEBUG_ASSERT(p1->num_hash_digits > 0 && p1->num_indices > 0);
+	DEBUG_ASSERT(p1->indices[0] != p2->indices[0]);
 
 	i32 prev_num_indices = p1->num_indices;
 	i32 num_indices = prev_num_indices * 2;
@@ -522,40 +526,86 @@ FinalJoin final_join(PartialJoin *p1, PartialJoin *p2){
 }
 
 void equihash_solve(blake2b_state *base_state){
-	i32 num_partial = BTCZ_DOMAIN + BTCZ_HASHES_PER_BLAKE;
-	PartialJoin *partial = (PartialJoin*)malloc(num_partial * sizeof(PartialJoin));
-	PartialJoin *aux = (PartialJoin*)malloc(num_partial * sizeof(PartialJoin));
+	// TODO: We need some extra_room because each stage may
+	// yield more than BTCZ_DOMAIN matches. We should estimate
+	// this value as a constant (BTCZ_EXTRA_ROOM or something else).
+	i32 extra_room = 1000000;
+	PartialJoin *partial = (PartialJoin*)malloc((extra_room + BTCZ_DOMAIN) * sizeof(PartialJoin));
+	PartialJoin *aux = (PartialJoin*)malloc((extra_room + BTCZ_DOMAIN) * sizeof(PartialJoin));
 
-	i32 num_results = 0;
-	FinalJoin results[16];
-
-	for(i32 i = 0; i < (num_partial / BTCZ_HASHES_PER_BLAKE); i += 1){
+	i32 num_partial = 0;
+	for(i32 i = 0; num_partial < BTCZ_DOMAIN; i += 1){
 		u8 hash[BTCZ_BLAKE_OUTLEN];
 		generate_hash(base_state, i, hash, BTCZ_BLAKE_OUTLEN);
-		for(i32 j = 0; j < BTCZ_HASHES_PER_BLAKE; j += 1){
-			i32 index = i * BTCZ_HASHES_PER_BLAKE + j;
+		for(i32 j = 0; j < BTCZ_HASHES_PER_BLAKE && num_partial < BTCZ_DOMAIN; j += 1){
+			i32 index = num_partial++;
+			DEBUG_ASSERT((index / BTCZ_HASHES_PER_BLAKE) == i);
+			DEBUG_ASSERT((index % BTCZ_HASHES_PER_BLAKE) == j);
 			PartialJoin *cur = &partial[index];
+
 			cur->num_hash_digits = BTCZ_HASH_DIGITS;
 			unpack_uints(BTCZ_HASH_DIGIT_BITS,
 				hash + j * BTCZ_HASH_BYTES, BTCZ_HASH_BYTES,
 				cur->hash_digits, BTCZ_HASH_DIGITS);
 
-#if 0
-			// TODO: Remove. I was testing if the order was
-			// different.
-			for(i32 k = 0; k < BTCZ_HASH_DIGITS / 2; k += 1){
-				i32 l = BTCZ_HASH_DIGITS - 1 - k;
-				u32 tmp = cur->hash_digits[k];
-				cur->hash_digits[k] = cur->hash_digits[l];
-				cur->hash_digits[l] = tmp;
-			}
-#endif
-
 			cur->num_indices = 1;
 			cur->indices[0] = index;
 		}
 	}
-	num_partial -= BTCZ_HASHES_PER_BLAKE;
+
+#if 1
+	// TODO: Remove.
+	{
+		struct{
+			i32 index;
+			u32 hash_digits[BTCZ_HASH_DIGITS];
+		} test_data[] = {
+			{339258, {12763199, 1584791, 2583183, 12084387, 16611465, 9268963}},
+			{11451015, {12763199, 16365629, 7151278, 467026, 4205266, 15504569}},
+			{10986351, {3695198, 15390428, 673078, 331003, 8876346, 16447381}},
+			{20832196, {3695198, 737398, 11082272, 16250700, 15621279, 6560796}},
+			{1461783, {12476961, 604624, 16400280, 6992805, 7642022, 7283328}},
+			{6797032, {12476961, 2600180, 10738461, 16556523, 14714972, 13670032}},
+			{9636070, {16228714, 10781120, 4750401, 15160512, 4003196, 4337519}},
+			{29706137, {16228714, 9049316, 16298995, 14273846, 13976567, 16396377}},
+			{1639499, {1463811, 7376485, 11522976, 869507, 5071011, 5589149}},
+			{21380134, {1463811, 15396067, 8899859, 9394834, 2972981, 16058404}},
+			{22853330, {3838001, 9906299, 1914831, 4566335, 5599073, 10784737}},
+			{27250728, {3838001, 871165, 13042365, 10192885, 3865451, 10581015}},
+			{11213973, {10344380, 8783529, 819118, 12019859, 5953728, 1755433}},
+			{14146459, {10344380, 5175492, 3064173, 13400868, 4950392, 6092018}},
+			{20908596, {13029519, 4264084, 10894600, 10895875, 9411820, 1690585}},
+			{29520442, {13029519, 9039609, 7776266, 6574481, 15807715, 11274694}},
+			{1126163, {8636647, 3750984, 3941346, 8348111, 6655697, 8077944}},
+			{25462353, {8636647, 7216826, 13412793, 13934951, 514289, 329302}},
+			{6911805, {3271192, 9672470, 11926199, 8421534, 12466265, 16212720}},
+			{9040121, {3271192, 12891620, 2227614, 11088166, 3817815, 12733775}},
+			{4394928, {77369, 14572622, 8457714, 8695502, 10306904, 9917877}},
+			{8877925, {77369, 12872404, 7857957, 12390401, 8661990, 1535928}},
+			{21657592, {323813, 12750063, 14391060, 2849891, 7932284, 14205285}},
+			{22519497, {323813, 14203509, 4845745, 8820692, 11304197, 14832661}},
+			{5940679, {13427253, 6336025, 5944112, 7809430, 8184837, 5580211}},
+			{32848787, {13427253, 15910975, 1501393, 10074005, 2674651, 4748510}},
+			{8772241, {8603534, 13318394, 396091, 14440551, 12748049, 3991066}},
+			{16081095, {8603534, 5856988, 5957514, 5226525, 13124388, 16158503}},
+			{7280509, {6156785, 3756439, 5454230, 8129168, 14729429, 12424899}},
+			{30030826, {6156785, 11683931, 1819156, 4298517, 16474583, 13047}},
+			{16686335, {11939592, 13760561, 9312338, 15991185, 1290705, 7716465}},
+			{17899816, {11939592, 5956093, 14046336, 10665477, 11838069, 4200583}},
+		};
+
+		for(i32 i = 0; i < NARRAY(test_data); i += 1){
+			i32 index = test_data[i].index;
+			bool ok = true;
+			for(i32 j = 0; j < BTCZ_HASH_DIGITS; j += 1){
+				ok = ok && partial[index].hash_digits[j]
+								== test_data[i].hash_digits[j];
+			}
+			LOG("partial[%d] = %s\n", index, ok ? "ok" : "failed");
+		}
+		//return;
+	}
+#endif
 
 	for(i32 digit = 0; digit < (BTCZ_HASH_DIGITS - 2); digit += 1){
 		LOG("digit %d - start\n", digit);
@@ -565,7 +615,8 @@ void equihash_solve(blake2b_state *base_state){
 		LOG("digit %d - sorted\n", digit);
 	
 		i32 num_aux = 0;
-		for(i32 i = 0; i < num_partial;){
+		for(i32 i = 0; i < (num_partial - 1);){
+#if 0
 			i32 j = 1;
 			while((i + j) < num_partial){
 				if(partial[i].hash_digits[0] != partial[i + j].hash_digits[0])
@@ -575,16 +626,50 @@ void equihash_solve(blake2b_state *base_state){
 				j += 1;
 			}
 			i += j;
+#else
+			// NOTE: The list is sorted so we only need to check subsequent
+			// elements. If N elements have the same first digit, we need to
+			// consider all their combinations (without repetition) which should
+			// yield (N choose 2) pairs.
+
+			i32 j = 1;
+			while((i + j) < num_partial
+			  && partial[i].hash_digits[0] == partial[i + j].hash_digits[0]){
+				j += 1;
+			}
+
+			for(i32 m = 0; m < (j - 1); m += 1){
+				for(i32 n = m + 1; n < j; n += 1){
+					if(partial_distinct_indices(&partial[i + m], &partial[i + n]))
+						aux[num_aux++] = partial_join(&partial[i + m], &partial[i + n]);
+				}
+			}
+			i += j;
+#endif
 		}
 
 		LOG("digit %d - end (num_partial = %d, num_aux = %d)\n",
 			digit, num_partial, num_aux);
 
 		num_partial = num_aux;
-		memcpy(partial, aux, sizeof(PartialJoin) * num_aux);
+		memcpy(partial, aux, num_partial * sizeof(PartialJoin));
 	}
 
+	// TODO: We should fix the sorting method here to consider both
+	// digits at this stage. We can still find the solution with the
+	// block we're currently testing but this may cause us to miss
+	// solutions in other cases.
+
+	LOG("last two digits - start\n");
+
+	eh_merge_sort(partial, aux, num_partial);
+
+	LOG("last two digits - sorted\n");
+
+	i32 num_results = 0;
+	FinalJoin results[16];
 	for(i32 i = 0; i < num_partial;){
+#if 0
 		i32 j = 1;
 		while((i + j) < num_partial){
 			if(partial[i].hash_digits[0] != partial[i + j].hash_digits[0]
@@ -595,13 +680,30 @@ void equihash_solve(blake2b_state *base_state){
 			j += 1;
 		}
 		i += j;
+#else
+		i32 j = 1;
+		while((i + j) < num_partial
+			&& (partial[i].hash_digits[0] == partial[i + j].hash_digits[0])
+			&& (partial[i].hash_digits[1] == partial[i + j].hash_digits[1])){
+			j += 1;
+		}
+
+		for(i32 m = 0; m < (j - 1); m += 1){
+			for(i32 n = m + 1; n < j; n += 1){
+				if(partial_distinct_indices(&partial[i + m], &partial[i + n])){
+					results[num_results++] = final_join(&partial[i + m], &partial[i + n]);
+				}
+			}
+		}
+		i += j;
+#endif
 	}
 
 	LOG("num_results = %d\n", num_results);
 	for(i32 i = 0; i < num_results; i += 1){
 		LOG("proof #%d:\n", i);
 		for(i32 j = 0; j < BTCZ_PROOF_INDICES; j += 1){
-			LOG("\t%08X\n", results[i].indices[j]);
+			LOG("\t[%d] = %u\n", j, results[i].indices[j]);
 		}
 	}
 
@@ -629,11 +731,23 @@ bool equihash_check_solution(blake2b_state *base_state, u8 *solution){
 		partial[i].indices[0] = indices[i];
 	}
 
+#if 0
+	// TODO: Remove.
+	{
+		for(i32 i = 0; i < BTCZ_PROOF_INDICES; i += 1){
+			printf("{%d, {", indices[i]);
+			for(i32 j = 0; j < (BTCZ_HASH_DIGITS - 1); j += 1){
+				printf("%u, ", partial[i].hash_digits[j]);
+			}
+			printf("%u}},\n", partial[i].hash_digits[BTCZ_HASH_DIGITS - 1]);
+		}
+	}
+#endif
+
 	i32 num_partial = BTCZ_PROOF_INDICES;
-	i32 num_aux = 0;
 	PartialJoin aux[BTCZ_PROOF_INDICES];
 	for(i32 digit = 0; digit < (BTCZ_HASH_DIGITS - 2); digit += 1){
-		num_aux = 0;
+		i32 num_aux = 0;
 		for(i32 i = 0; i < num_partial; i += 2){
 			if(!(partial[i].hash_digits[0] == partial[i + 1].hash_digits[0]))
 				return false;
@@ -649,7 +763,7 @@ bool equihash_check_solution(blake2b_state *base_state, u8 *solution){
 		memcpy(partial, aux, num_aux * sizeof(PartialJoin));
 	}
 
-	DEBUG_ASSERT(num_aux == 2);
+	DEBUG_ASSERT(num_partial == 2);
 	if(!(partial[0].hash_digits[0] == partial[1].hash_digits[0])
 	  && !(partial[0].hash_digits[1] == partial[1].hash_digits[1]))
 		return false;
@@ -657,6 +771,16 @@ bool equihash_check_solution(blake2b_state *base_state, u8 *solution){
 		return false;
 	if(!(partial[0].indices[0] < partial[1].indices[0]))
 		return false;
+
+#if 0
+	// TODO: Remove.
+	FinalJoin result = final_join(&partial[0], &partial[1]);
+	for(i32 i = 0; i < BTCZ_PROOF_INDICES; i += 1){
+		LOG("result.indices[%d] = %d, indices[%d] = %u, equal = %s\n",
+			i, result.indices[i], i, indices[i],
+			(result.indices[i] == indices[i]) ? "yes" : "no");
+	}
+#endif
 
 	return true;
 }
