@@ -1,4 +1,5 @@
 #include "common.hh"
+#include "buffer_util.hh"
 
 static const u64 blake2b_iv[8] = {
 	0x6A09E667F3BCC908ULL, 0xBB67AE8584CAA73BULL,
@@ -22,43 +23,6 @@ static const u8 blake2b_sigma[12][16] = {
 	{ 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 }
 };
 
-#if ARCH_BIG_ENDIAN
-static INLINE
-u64 load64(u8 *src){
-	u64 result =
-		((u64)src[0] << 0)
-		| ((u64)src[1] << 8)
-		| ((u64)src[2] << 16)
-		| ((u64)src[3] << 24)
-		| ((u64)src[4] << 32)
-		| ((u64)src[5] << 40)
-		| ((u64)src[6] << 48)
-		| ((u64)src[7] << 56);
-	return result;
-}
-static INLINE
-void store64(u8 *dst, u64 val){
-	dst[0] = (u8)(val >> 0);
-	dst[1] = (u8)(val >> 8);
-	dst[2] = (u8)(val >> 16);
-	dst[3] = (u8)(val >> 24);
-	dst[4] = (u8)(val >> 32);
-	dst[5] = (u8)(val >> 40);
-	dst[6] = (u8)(val >> 48);
-	dst[7] = (u8)(val >> 56);
-}
-#else // ARCH_BIG_ENDIAN
-static INLINE
-u64 load64(u8 *src){
-	u64 result;
-	memcpy(&result, src, 8);
-	return result;
-}
-void store64(u8 *dst, u64 val){
-	memcpy(dst, &val, 8);
-}
-#endif // ARCH_BIG_ENDIAN
-
 static INLINE
 u64 rotr64(u64 val, u8 n){
 	DEBUG_ASSERT(n > 0 && n <= 63);
@@ -66,73 +30,34 @@ u64 rotr64(u64 val, u8 n){
 	return result;
 }
 
-void blake2b_init(blake2b_state *S, u8 outlen){
-	const u8 BTCZ_BLAKE2B_PARAMS[64] = {
-		outlen,						// digest_length
-		0x00,						// key_length
-		0x01,						// fanout
-		0x01,						// depth
-		0x00, 0x00, 0x00, 0x00,		// leaf_length
-		0x00, 0x00, 0x00, 0x00,		// node_offset
-		0x00, 0x00, 0x00, 0x00,		// xof_length
-		0x00,						// node_depth
-		0x00,						// inner_length
+void blake2b_init_eh(blake2b_state *S, const char *personal, u32 N, u32 K){
+	u32 eh_hash_bytes = BITS_TO_BYTES(N);
+	u32 eh_hashes_per_blake = BLAKE2B_OUTBYTES / eh_hash_bytes;
+	u32 eh_outlen = eh_hashes_per_blake * eh_hash_bytes;
 
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00,					// reserved
+	DEBUG_ASSERT(eh_outlen <= BLAKE2B_OUTBYTES);
+	DEBUG_ASSERT(strlen(personal) == 8);
 
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,		// salt
+	u8 params[64] = {};
+	params[0] = (u8)eh_outlen;
+	params[2] = 1;
+	params[3] = 1;
+	memcpy(params + 48, personal, 8);
+	encode_u32_le(params + 56, N);
+	encode_u32_le(params + 60, K);
 
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,		// personal
-	};
+#if BUILD_DEBUG
+	for(i32 i = 0; i < sizeof(params); i += 4){
+		LOG("%02X, %02X, %02X, %02X\n",
+			params[i + 0], params[i + 1],
+			params[i + 2], params[i + 3]);
+	}
+#endif
 
 	memset(S, 0, sizeof(blake2b_state));
 	for(i32 i = 0; i < 8; i += 1)
-		S->h[i] = blake2b_iv[i] ^ load64((u8*)BTCZ_BLAKE2B_PARAMS + i * 8);
-	S->outlen = outlen;
-}
-
-void blake2b_init_btcz(blake2b_state *S){
-	const u8 BTCZ_BLAKE2B_PARAMS[64] = {
-		BTCZ_BLAKE_OUTLEN,			// digest_length
-		0x00,						// key_length
-		0x01,						// fanout
-		0x01,						// depth
-		0x00, 0x00, 0x00, 0x00,		// leaf_length
-		0x00, 0x00, 0x00, 0x00,		// node_offset
-		0x00, 0x00, 0x00, 0x00,		// xof_length
-		0x00,						// node_depth
-		0x00,						// inner_length
-
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00,					// reserved
-
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,		// salt
-
-		//"BitcoinZ\x90\x00\x00\x00\x05\x00\x00\x00"
-		0x42, 0x69, 0x74, 0x63,
-		0x6F, 0x69, 0x6E, 0x5A,
-		0x90, 0x00, 0x00, 0x00,
-		0x05, 0x00, 0x00, 0x00,		// personal
-	};
-
-	memset(S, 0, sizeof(blake2b_state));
-	for(i32 i = 0; i < 8; i += 1)
-		S->h[i] = blake2b_iv[i] ^ load64((u8*)BTCZ_BLAKE2B_PARAMS + i * 8);
-	S->outlen = BTCZ_BLAKE_OUTLEN;
+		S->h[i] = blake2b_iv[i] ^ decode_u64_le((u8*)params + i * 8);
+	S->outlen = eh_outlen;
 }
 
 static
@@ -181,7 +106,7 @@ void blake2b_compress(blake2b_state *S, u8 *block){
 	u64 v[16];
 
 	for(i32 i = 0; i < 16; i += 1)
-		m[i] = load64(block + i * 8);
+		m[i] = decode_u64_le(block + i * 8);
 
 	for(i32 i = 0; i < 8; i += 1)
 		v[i] = S->h[i];
@@ -249,6 +174,6 @@ void blake2b_final(blake2b_state *S, u8 *out, u64 outlen){
 
 	u8 tmp[BLAKE2B_OUTBYTES];
 	for(i32 i = 0; i < 8; i += 1)
-		store64(tmp + i * 8, S->h[i]);
+		encode_u64_le(tmp + i * 8, S->h[i]);
 	memcpy(out, tmp, S->outlen);
 }

@@ -27,8 +27,8 @@ typedef size_t		usize;
 
 // arch settings
 #ifdef ARCH_X64
-#	define ARCH_UNALIGNED_ACCESS 1
 #	define ARCH_BIG_ENDIAN 0
+#	define ARCH_UNALIGNED_ACCESS 1
 #else
 #	error "add arch settings"
 #endif
@@ -54,11 +54,11 @@ typedef size_t		usize;
 // compiler settings
 #if defined(_MSC_VER)
 #	define INLINE __forceinline
-#	define UNREACHABLE abort() //do { __assume(0); abort(); } while(0)
+#	define UNREACHABLE abort()
 #	define FALLTHROUGH ((void)0)
 #elif defined(__GNUC__)
 #	define INLINE __attribute__((always_inline)) inline
-#	define UNREACHABLE abort() //do { __builtin_unreachable(); abort(); } while(0)
+#	define UNREACHABLE abort()
 #	define FALLTHROUGH __attribute__((fallthrough))
 #else
 #	error "add compiler settings"
@@ -76,7 +76,48 @@ typedef size_t		usize;
 #define LOG_ERROR(...)	fprintf(stdout, __FUNCTION__ ": " __VA_ARGS__)
 
 // ----------------------------------------------------------------
-// BLAKE2B
+// u256
+// ----------------------------------------------------------------
+struct u256{
+	// NOTE: `data` is encoded in little endian order.
+	u8 data[32];
+
+	// NOTE: Each 32-bits word is encoded in cpu endian order.
+	// But words are ordered in little endian so `data[0]` contains
+	// the low 32 bits of the u256 and so on.
+	//u32 data[8];
+};
+
+static
+bool operator>(const u256 &a, const u256 &b){
+	for(i32 i = 31; i >= 0; i -= 1){
+		if(a.data[i] > b.data[i])
+			return true;
+		if(a.data[i] < b.data[i])
+			return false;
+	}
+	return false;
+}
+
+static
+bool operator==(const u256 &a, const u256 &b){
+	for(i32 i = 0; i < 32; i += 1){
+		if(a.data[i] != b.data[i])
+			return false;
+	}
+	return true;
+}
+
+// ----------------------------------------------------------------
+// Utility - main.cc
+// ----------------------------------------------------------------
+void hex_to_buffer(const char *hex, u8 *buf, i32 buflen);
+void hex_to_buffer_inv(const char *hex, u8 *buf, i32 buflen);
+i32 count_hex_digits(const char *hex);
+void print_buf(const char *debug_name, u8 *buf, i32 buflen);
+
+// ----------------------------------------------------------------
+// BLAKE2B - blake2b.cc
 // ----------------------------------------------------------------
 #define BLAKE2B_BLOCKBYTES 128
 #define BLAKE2B_OUTBYTES 64
@@ -89,35 +130,44 @@ struct blake2b_state{
 	u64 outlen;
 };
 
-void blake2b_init(blake2b_state *S, u8 outlen);
-void blake2b_init_btcz(blake2b_state *S);
+void blake2b_init_eh(blake2b_state *S, const char *personal, u32 N, u32 K);
 void blake2b_update(blake2b_state *S, u8 *in, u64 inlen);
 void blake2b_final(blake2b_state *S, u8 *out, u64 outlen);
 
 // ----------------------------------------------------------------
-// BitcoinZ = Equihash (N = 144, K = 5)
+// SHA-256 - sha256.cc
+// ----------------------------------------------------------------
+
+
+// ----------------------------------------------------------------
+// Equihash - equihash.cc
+//	ZEC: personal = "ZcashPoW", N = 200, K = 9
+//	YEC: personal = "ZcashPoW", N = 192, K = 7
+//	BTCZ: personal = "BitcoinZ", N = 144, K = 5
 // ----------------------------------------------------------------
 
 // TODO: Add notes on how equihash works and how these defines
 // are calculated.
 
-#define BTCZ_EH_N				144
-#define BTCZ_EH_K				5
+#define EH_PERSONAL				"BitcoinZ"
+#define EH_N					144
+#define EH_K					5
 
-#define BTCZ_HASH_BYTES			18	// == BITS_TO_BYTES(BTCZ_EH_N)
-#define BTCZ_HASHES_PER_BLAKE	3	// == BLAKE2B_OUTBYTES / BTCZ_HASH_BYTES
-#define BTCZ_BLAKE_OUTLEN		54	// == BTCZ_HASHES_PER_BLAKE * BTCZ_HASH_BYTES
-#define BTCZ_HASH_DIGIT_BITS	24	// == BTCZ_EH_N / (BTCZ_EH_K + 1)
-#define BTCZ_HASH_DIGIT_BYTES	3	// == BITS_TO_BYTES(BTCZ_HASH_DIGIT_BITS)
-#define BTCZ_HASH_DIGITS		6	// == BTCZ_EH_K + 1
+#define EH_HASH_BYTES			(BITS_TO_BYTES(EH_N))
+#define EH_HASHES_PER_BLAKE		(BLAKE2B_OUTBYTES / EH_HASH_BYTES)
+#define EH_BLAKE_OUTLEN			(EH_HASHES_PER_BLAKE * EH_HASH_BYTES)
 
-#define BTCZ_PROOF_INDEX_BITS	25	// == BTCZ_HASH_DIGIT_BITS + 1
-#define BTCZ_PROOF_INDICES		32	// == 1 << BTCZ_EH_K
-#define BTCZ_PACKED_PROOF_BYTES	100	// == BITS_TO_BYTES(BTCZ_PROOF_INDEX_BITS * BTCZ_PROOF_INDICES)
+#define EH_HASH_DIGITS			(EH_K + 1)
+#define EH_HASH_DIGIT_BITS		(EH_N / EH_HASH_DIGITS)
+#define EH_HASH_DIGIT_BYTES		(BITS_TO_BYTES(EH_HASH_DIGIT_BITS))
 
-#define BTCZ_DOMAIN				(1 << 25) // == 1 << BTCZ_PROOF_INDEX_BITS
+#define EH_PROOF_INDEX_BITS		(EH_HASH_DIGIT_BITS + 1)
+#define EH_PROOF_INDICES		(1 << EH_K)
+#define EH_PACKED_PROOF_BYTES	(BITS_TO_BYTES(EH_PROOF_INDEX_BITS * EH_PROOF_INDICES))
 
-// NOTE: PartialJoin is meant to be used for the first (BTCZ_HASH_DIGITS - 2)
+#define EH_DOMAIN				(1 << EH_PROOF_INDEX_BITS)
+
+// NOTE: PartialJoin is meant to be used for the first (EH_HASH_DIGITS - 2)
 // digits. FinalJoin is meant to be used for the last two digits. See the equihash
 // algorithm description in `equihash.cc` for more info.
 struct PartialJoin{
@@ -126,14 +176,14 @@ struct PartialJoin{
 	// static size.
 
 	i32 num_hash_digits;
-	u32 hash_digits[BTCZ_HASH_DIGITS];
+	u32 hash_digits[EH_HASH_DIGITS];
 
 	i32 num_indices;
-	u32 indices[BTCZ_PROOF_INDICES / 2];
+	u32 indices[EH_PROOF_INDICES / 2];
 };
 
 struct FinalJoin{
-	u32 indices[BTCZ_PROOF_INDICES];
+	u32 indices[EH_PROOF_INDICES];
 };
 
 #endif //COMMON_HH_

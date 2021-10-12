@@ -2,31 +2,6 @@
 
 #include "common.hh"
 
-struct u256{
-	// NOTE: `data` is encoded in little endian order.
-	u8 data[32];
-};
-
-static
-bool operator>(const u256 &a, const u256 &b){
-	for(i32 i = 31; i >= 0; i -= 1){
-		if(a.data[i] > b.data[i])
-			return true;
-		if(a.data[i] < b.data[i])
-			return false;
-	}
-	return false;
-}
-
-static
-bool operator==(const u256 &a, const u256 &b){
-	for(i32 i = 0; i < 32; i += 1){
-		if(a.data[i] != b.data[i])
-			return false;
-	}
-	return true;
-}
-
 struct BlockHeader{
 	i32 version;
 	u256 hash_prev_block;
@@ -43,94 +18,18 @@ void serialize_u32(u8 *buffer, u32 value){
 	buffer[1] = (u8)(value >> 8);
 	buffer[2] = (u8)(value >> 16);
 	buffer[3] = (u8)(value >> 24);
+	//encode_u32_le(buffer, value);
 }
 
 static INLINE
 void serialize_u256(u8 *buffer, u256 value){
 	memcpy(buffer, value.data, 32);
+
+	//for(i32 i = 0; i < 8; i += 1)
+	//	encode_u32_le(buffer + i * 4, value.data[i]);
 }
 
 static
-i32 hexdigit(u8 c){
-	// TODO: turn into a look up table
-	if(c >= '0' && c <= '9'){
-		return c - '0';
-	}else if(c >= 'A' && c <= 'F'){
-		return 0x0A + c - 'A';
-	}else if(c >= 'a' && c <= 'f'){
-		return 0x0A + c - 'a';
-	}else{
-		return -1;
-	}
-}
-
-static
-void hex_to_buffer_le(const char *hex, u8 *buf, i32 buflen){
-	if(hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
-		hex += 2;
-
-	// now, to load `buf` in little endian order we need
-	// to start from the end of the hex string
-	const char *ptr = hex;
-	while(hexdigit(*ptr) != -1)
-		ptr += 1;
-	ptr -= 1;
-
-	memset(buf, 0, buflen);
-	i32 i = 0;
-	while(ptr >= hex && i < buflen){
-		i32 c0 = hexdigit(*ptr--);
-		i32 c1 = 0;
-		if(ptr >= hex)
-			c1 = hexdigit(*ptr--);
-		DEBUG_ASSERT(c0 != -1 && c1 != -1);
-		buf[i++] = (u8)(c1 << 4) | (u8)c0;
-	}
-}
-
-static
-void hex_to_buffer(const char *hex, u8 *buf, i32 buflen){
-	if(hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
-		hex += 2;
-
-	memset(buf, 0, buflen);
-	const char *ptr = hex;
-	i32 i = 0;
-	while(*ptr && i < buflen){
-		i32 c0 = hexdigit(*ptr++);
-		i32 c1 = 0;
-		if(*ptr){
-			c1 = c0;
-			c0 = hexdigit(*ptr++);
-		}
-		DEBUG_ASSERT(c0 != -1 && c1 != -1);
-		buf[i++] = (u8)(c1 << 4) | (u8)c0;
-	}
-}
-
-static
-i32 count_hex_digits(const char *hex){
-	if(hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
-		hex += 2;
-	i32 result = 0;
-	while(hexdigit(*hex++) != -1)
-		result += 1;
-	return result;
-}
-
-static
-void print_buf(const char *debug_name, u8 *buf, i32 buflen){
-	printf("buf (%s, len = %d):\n", debug_name, buflen);
-	for(i32 i = 0; i < buflen; i += 1){
-		if((i & 15) == 15)
-			printf("%02X\n", buf[i]);
-		else
-			printf("%02X ", buf[i]);
-	}
-	printf("\n");
-}
-
-
 void pack_uints(i32 uint_bits,
 		u32 *unpacked, i32 num_unpacked,
 		u8 *packed, i32 packed_len){
@@ -164,6 +63,7 @@ void pack_uints(i32 uint_bits,
 	}
 }
 
+static
 void unpack_uints(i32 uint_bits,
 		u8 *packed, i32 packed_len,
 		u32 *unpacked, i32 num_unpacked){
@@ -193,51 +93,6 @@ void unpack_uints(i32 uint_bits,
 	}
 }
 
-struct u144{
-	// NOTE: `data` is encoded in little endian order.
-	u8 data[18];
-};
-
-#if 0
-u144 make_u144(u32 low32){
-	u144 result = {};
-	result.data[0] = (u8)(low32 >>  0);
-	result.data[1] = (u8)(low32 >>  8);
-	result.data[2] = (u8)(low32 >> 16);
-	result.data[3] = (u8)(low32 >> 24);
-	return result;
-}
-#endif
-
-bool operator>(const u144 &a, const u144 &b){
-	for(i32 i = 17; i >= 0; i -= 1){
-		if(a.data[i] > b.data[i])
-			return true;
-		if(a.data[i] < b.data[i])
-			return false;
-	}
-	return false;
-}
-
-bool operator==(const u144 &a, const u144 &b){
-	for(i32 i = 0; i < 18; i += 1){
-		if(a.data[i] != b.data[i])
-			return false;
-	}
-	return true;
-}
-
-void operator^=(u144 &a, const u144 &b){
-	for(i32 i = 0 ; i < 18; i += 1)
-		a.data[i] ^= b.data[i];
-}
-
-u144 operator^(const u144 &a, const u144 &b){
-	u144 result = a;
-	result ^= b;
-	return result;
-}
-
 static
 void init_state(blake2b_state *state, BlockHeader *header){
 	// TODO: Init state without the nonce then add the nonce
@@ -256,7 +111,7 @@ void init_state(blake2b_state *state, BlockHeader *header){
 
 	print_buf("block_header", buf, 140);
 
-	blake2b_init_btcz(state);
+	blake2b_init_eh(state, EH_PERSONAL, EH_N, EH_K);
 	blake2b_update(state, buf, 140);
 }
 
@@ -269,7 +124,7 @@ void generate_hash(blake2b_state *base_state, u32 index, u8 *out, i32 outlen){
 
 void equihash_solve(blake2b_state *base_state);
 bool equihash_check_solution(blake2b_state *base_state, u8 *solution);
-int main(int argc, char **argv){
+int main_eh_test(int argc, char **argv){
 	// block = 818128
 	i32 version = 4;
 	char *hash_prev_block_hex = "0000007b753e415f80614ba8130aa4668ca4731b0539d9919c2074b43a46b9e8";
@@ -289,12 +144,12 @@ int main(int argc, char **argv){
 	blake2b_state base_state;
 	BlockHeader block_header;
 	block_header.version = version;
-	hex_to_buffer_le(hash_prev_block_hex, block_header.hash_prev_block.data, 32);
-	hex_to_buffer_le(hash_merkle_root_hex, block_header.hash_merkle_root.data, 32);
-	hex_to_buffer_le(hash_final_sapling_root_hex, block_header.hash_final_sapling_root.data, 32);
+	hex_to_buffer_inv(hash_prev_block_hex, block_header.hash_prev_block.data, 32);
+	hex_to_buffer_inv(hash_merkle_root_hex, block_header.hash_merkle_root.data, 32);
+	hex_to_buffer_inv(hash_final_sapling_root_hex, block_header.hash_final_sapling_root.data, 32);
 	block_header.time = time;
 	block_header.bits = bits;
-	hex_to_buffer_le(nonce_hex, block_header.nonce.data, 32);
+	hex_to_buffer_inv(nonce_hex, block_header.nonce.data, 32);
 	init_state(&base_state, &block_header);
 
 	equihash_solve(&base_state);
@@ -303,91 +158,6 @@ int main(int argc, char **argv){
 	hex_to_buffer(solution_hex, solution, 100);
 	LOG("solution = %d\n", equihash_check_solution(&base_state, solution));
 	return 0;
-
-#if 0
-	u8 solution[100];
-	u32 indices[32];
-	//ZHashDigits hashes[32];
-	u144 hashes[32];
-
-	// NOTE: Why? The solution seems to be stored in big endian order.
-	// But why? It took me days of reading the mess that is the BitcoinZ's
-	// codebase. But now looking at it, it should be obvious. Solution is
-	// an std::vector instead of a u256 in the block header. Because u256 is
-	// stored in little endian I thought for some reason that the solution
-	// would be stored in the same fashion. The codebase has so many levels
-	// of abstraction it is hard to keep track of the details.
-	hex_to_buffer(solution_hex, solution, 100);
-	unpack_uints(25, solution, 100, indices, NARRAY(indices));
-
-#if 0
-	pack_uints(25, indices, NARRAY(indices), solution, 100);
-	unpack_uints(25, solution, 100, indices, NARRAY(indices));
-#endif
-
-	for(i32 i = 0; i < 32; i += 1){
-		LOG("indices[%d] = %u\n", i, indices[i]);
-		u8 hash[BTCZ_BLAKE_OUTLEN];
-		generate_hash(&base_state, indices[i] / 3, hash, BTCZ_BLAKE_OUTLEN);
-		//hashes[i] = make_zhash_digits(hash + (indices[i] % 3) * 18, 18);
-		memcpy(hashes[i].data, hash + (indices[i] % 3) * 18, 18);
-
-		//u32 hash_offset = (indices[i] % BTCZ_HASHES_PER_BLAKE) * BTCZ_HASH_BYTES;
-		//unpack_uints(BTCZ_HASH_DIGIT_BITS,
-		//	hash + hash_offset, BTCZ_HASH_BYTES,
-		//	hash_digits, BTC_HASH_DIGITS);
-	}
-
-	for(i32 stage = 0; stage < 4; stage += 1){
-		i32 n = (1 << stage);
-		for(i32 i = 0; i < 32; i += 2 * n){
-			i32 cur = i;
-			i32 next = i + n;
-			hashes[cur] ^= hashes[next];
-
-			i32 num_collisions = 0;
-			for(i32 j = 3 * stage; j < 3 * (stage + 1); j += 1){
-				if(hashes[cur].data[j] == 0x00)
-					num_collisions += 1;
-			}
-
-			LOG("stage = %d, pair = (%d, %d), num_collisions = %d\n",
-				stage, cur, next, num_collisions);
-
-			for(i32 j = 0; j < (next - cur); j += 1){
-				if(indices[cur + j] < indices[next + j])
-					LOG("\tindices[%d] < indices[%d]\n", cur + j, next + j);
-				else if(indices[cur + j] > indices[next + j])
-					LOG("\tindices[%d] > indices[%d]\n", cur + j, next + j);
-				else
-					LOG("\tindices[%d] = indices[%d]\n", cur + j, next + j);
-			}
-		}
-	}
-
-	{
-		i32 cur = 0;
-		i32 next = 16;
-		hashes[cur] ^= hashes[next];
-
-		i32 num_collisions = 0;
-		for(i32 j = 12; j < 18; j += 1){
-			if(hashes[0].data[j] == 0x00)
-				num_collisions += 1;
-		}
-		LOG("stage = 4, pair = (0, 16), num_collisions = %d\n", num_collisions);
-		for(i32 j = 0; j < 16; j += 1){
-			if(indices[cur + j] < indices[next + j])
-				LOG("\tindices[%d] < indices[%d]\n", cur + j, next + j);
-			else if(indices[cur + j] > indices[next + j])
-				LOG("\tindices[%d] > indices[%d]\n", cur + j, next + j);
-			else
-				LOG("\tindices[%d] = indices[%d]\n", cur + j, next + j);
-		}
-
-		print_buf("xor", hashes[cur].data, 18);
-	}
-#endif
 }
 
 static
@@ -474,7 +244,7 @@ PartialJoin partial_join(PartialJoin *p1, PartialJoin *p2){
 	i32 num_hash_digits = p1->num_hash_digits - 1;
 	i32 prev_num_indices = p1->num_indices;
 	i32 num_indices = prev_num_indices * 2;
-	DEBUG_ASSERT(num_indices > 0 && num_indices <= (BTCZ_PROOF_INDICES / 2));
+	DEBUG_ASSERT(num_indices > 0 && num_indices <= (EH_PROOF_INDICES / 2));
 
 	PartialJoin result;
 
@@ -508,7 +278,7 @@ FinalJoin final_join(PartialJoin *p1, PartialJoin *p2){
 
 	i32 prev_num_indices = p1->num_indices;
 	i32 num_indices = prev_num_indices * 2;
-	DEBUG_ASSERT(num_indices == BTCZ_PROOF_INDICES);
+	DEBUG_ASSERT(num_indices == EH_PROOF_INDICES);
 
 	FinalJoin result;
 	if(p1->indices[0] < p2->indices[0]){
@@ -526,88 +296,42 @@ FinalJoin final_join(PartialJoin *p1, PartialJoin *p2){
 }
 
 void equihash_solve(blake2b_state *base_state){
-	// TODO: We need some extra_room because each stage may
-	// yield more than BTCZ_DOMAIN matches. We should estimate
-	// this value as a constant (BTCZ_EXTRA_ROOM or something else).
-	i32 extra_room = 1000000;
-	PartialJoin *partial = (PartialJoin*)malloc((extra_room + BTCZ_DOMAIN) * sizeof(PartialJoin));
-	PartialJoin *aux = (PartialJoin*)malloc((extra_room + BTCZ_DOMAIN) * sizeof(PartialJoin));
+	// NOTE: Doing some probability analysis, the output of each stage
+	// should contain around the same number of inputs. Because there
+	// can be cases where we get more outputs than inputs, we need to
+	// add some extra room.
+
+	// TODO: The other workaround would be to allocate a large chunk of virtual
+	// memory and manually commit pages as we need them. This is simpler to
+	// do on Linux where the kernel only assigns memory pages when you touch
+	// the memory but requires extra steps on Windows with VirtualAlloc(MEM_COMMIT).
+
+	float extra_room = 1.05f; // 5% should work for now
+	i32 total_slots = (i32)(EH_DOMAIN * extra_room);
+	PartialJoin *partial = (PartialJoin*)malloc(total_slots * sizeof(PartialJoin));
+	PartialJoin *aux = (PartialJoin*)malloc(total_slots * sizeof(PartialJoin));
 
 	i32 num_partial = 0;
-	for(i32 i = 0; num_partial < BTCZ_DOMAIN; i += 1){
-		u8 hash[BTCZ_BLAKE_OUTLEN];
-		generate_hash(base_state, i, hash, BTCZ_BLAKE_OUTLEN);
-		for(i32 j = 0; j < BTCZ_HASHES_PER_BLAKE && num_partial < BTCZ_DOMAIN; j += 1){
+	for(i32 i = 0; num_partial < EH_DOMAIN; i += 1){
+		u8 hash[EH_BLAKE_OUTLEN];
+		generate_hash(base_state, i, hash, EH_BLAKE_OUTLEN);
+		for(i32 j = 0; j < EH_HASHES_PER_BLAKE && num_partial < EH_DOMAIN; j += 1){
 			i32 index = num_partial++;
-			DEBUG_ASSERT((index / BTCZ_HASHES_PER_BLAKE) == i);
-			DEBUG_ASSERT((index % BTCZ_HASHES_PER_BLAKE) == j);
+			DEBUG_ASSERT((index / EH_HASHES_PER_BLAKE) == i);
+			DEBUG_ASSERT((index % EH_HASHES_PER_BLAKE) == j);
 			PartialJoin *cur = &partial[index];
 
-			cur->num_hash_digits = BTCZ_HASH_DIGITS;
-			unpack_uints(BTCZ_HASH_DIGIT_BITS,
-				hash + j * BTCZ_HASH_BYTES, BTCZ_HASH_BYTES,
-				cur->hash_digits, BTCZ_HASH_DIGITS);
+			cur->num_hash_digits = EH_HASH_DIGITS;
+			unpack_uints(EH_HASH_DIGIT_BITS,
+				hash + j * EH_HASH_BYTES, EH_HASH_BYTES,
+				cur->hash_digits, EH_HASH_DIGITS);
 
 			cur->num_indices = 1;
 			cur->indices[0] = index;
 		}
 	}
 
-#if 1
-	// TODO: Remove.
-	{
-		struct{
-			i32 index;
-			u32 hash_digits[BTCZ_HASH_DIGITS];
-		} test_data[] = {
-			{339258, {12763199, 1584791, 2583183, 12084387, 16611465, 9268963}},
-			{11451015, {12763199, 16365629, 7151278, 467026, 4205266, 15504569}},
-			{10986351, {3695198, 15390428, 673078, 331003, 8876346, 16447381}},
-			{20832196, {3695198, 737398, 11082272, 16250700, 15621279, 6560796}},
-			{1461783, {12476961, 604624, 16400280, 6992805, 7642022, 7283328}},
-			{6797032, {12476961, 2600180, 10738461, 16556523, 14714972, 13670032}},
-			{9636070, {16228714, 10781120, 4750401, 15160512, 4003196, 4337519}},
-			{29706137, {16228714, 9049316, 16298995, 14273846, 13976567, 16396377}},
-			{1639499, {1463811, 7376485, 11522976, 869507, 5071011, 5589149}},
-			{21380134, {1463811, 15396067, 8899859, 9394834, 2972981, 16058404}},
-			{22853330, {3838001, 9906299, 1914831, 4566335, 5599073, 10784737}},
-			{27250728, {3838001, 871165, 13042365, 10192885, 3865451, 10581015}},
-			{11213973, {10344380, 8783529, 819118, 12019859, 5953728, 1755433}},
-			{14146459, {10344380, 5175492, 3064173, 13400868, 4950392, 6092018}},
-			{20908596, {13029519, 4264084, 10894600, 10895875, 9411820, 1690585}},
-			{29520442, {13029519, 9039609, 7776266, 6574481, 15807715, 11274694}},
-			{1126163, {8636647, 3750984, 3941346, 8348111, 6655697, 8077944}},
-			{25462353, {8636647, 7216826, 13412793, 13934951, 514289, 329302}},
-			{6911805, {3271192, 9672470, 11926199, 8421534, 12466265, 16212720}},
-			{9040121, {3271192, 12891620, 2227614, 11088166, 3817815, 12733775}},
-			{4394928, {77369, 14572622, 8457714, 8695502, 10306904, 9917877}},
-			{8877925, {77369, 12872404, 7857957, 12390401, 8661990, 1535928}},
-			{21657592, {323813, 12750063, 14391060, 2849891, 7932284, 14205285}},
-			{22519497, {323813, 14203509, 4845745, 8820692, 11304197, 14832661}},
-			{5940679, {13427253, 6336025, 5944112, 7809430, 8184837, 5580211}},
-			{32848787, {13427253, 15910975, 1501393, 10074005, 2674651, 4748510}},
-			{8772241, {8603534, 13318394, 396091, 14440551, 12748049, 3991066}},
-			{16081095, {8603534, 5856988, 5957514, 5226525, 13124388, 16158503}},
-			{7280509, {6156785, 3756439, 5454230, 8129168, 14729429, 12424899}},
-			{30030826, {6156785, 11683931, 1819156, 4298517, 16474583, 13047}},
-			{16686335, {11939592, 13760561, 9312338, 15991185, 1290705, 7716465}},
-			{17899816, {11939592, 5956093, 14046336, 10665477, 11838069, 4200583}},
-		};
-
-		for(i32 i = 0; i < NARRAY(test_data); i += 1){
-			i32 index = test_data[i].index;
-			bool ok = true;
-			for(i32 j = 0; j < BTCZ_HASH_DIGITS; j += 1){
-				ok = ok && partial[index].hash_digits[j]
-								== test_data[i].hash_digits[j];
-			}
-			LOG("partial[%d] = %s\n", index, ok ? "ok" : "failed");
-		}
-		//return;
-	}
-#endif
-
-	for(i32 digit = 0; digit < (BTCZ_HASH_DIGITS - 2); digit += 1){
+	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
 		LOG("digit %d - start\n", digit);
 
 		eh_merge_sort(partial, aux, num_partial);
@@ -616,17 +340,6 @@ void equihash_solve(blake2b_state *base_state){
 	
 		i32 num_aux = 0;
 		for(i32 i = 0; i < (num_partial - 1);){
-#if 0
-			i32 j = 1;
-			while((i + j) < num_partial){
-				if(partial[i].hash_digits[0] != partial[i + j].hash_digits[0])
-					break;
-				if(partial_distinct_indices(&partial[i], &partial[i + j]))
-					aux[num_aux++] = partial_join(&partial[i], &partial[i + j]);
-				j += 1;
-			}
-			i += j;
-#else
 			// NOTE: The list is sorted so we only need to check subsequent
 			// elements. If N elements have the same first digit, we need to
 			// consider all their combinations (without repetition) which should
@@ -634,7 +347,7 @@ void equihash_solve(blake2b_state *base_state){
 
 			i32 j = 1;
 			while((i + j) < num_partial
-			  && partial[i].hash_digits[0] == partial[i + j].hash_digits[0]){
+			  && (partial[i].hash_digits[0] == partial[i + j].hash_digits[0])){
 				j += 1;
 			}
 
@@ -645,7 +358,6 @@ void equihash_solve(blake2b_state *base_state){
 				}
 			}
 			i += j;
-#endif
 		}
 
 		LOG("digit %d - end (num_partial = %d, num_aux = %d)\n",
@@ -669,18 +381,6 @@ void equihash_solve(blake2b_state *base_state){
 	i32 num_results = 0;
 	FinalJoin results[16];
 	for(i32 i = 0; i < num_partial;){
-#if 0
-		i32 j = 1;
-		while((i + j) < num_partial){
-			if(partial[i].hash_digits[0] != partial[i + j].hash_digits[0]
-			  || partial[i].hash_digits[1] != partial[i + j].hash_digits[1])
-				break;
-			if(partial_distinct_indices(&partial[i], &partial[i + j]))
-				results[num_results++] = final_join(&partial[i], &partial[i + j]);
-			j += 1;
-		}
-		i += j;
-#else
 		i32 j = 1;
 		while((i + j) < num_partial
 			&& (partial[i].hash_digits[0] == partial[i + j].hash_digits[0])
@@ -696,15 +396,20 @@ void equihash_solve(blake2b_state *base_state){
 			}
 		}
 		i += j;
-#endif
 	}
 
 	LOG("num_results = %d\n", num_results);
 	for(i32 i = 0; i < num_results; i += 1){
 		LOG("proof #%d:\n", i);
-		for(i32 j = 0; j < BTCZ_PROOF_INDICES; j += 1){
+		for(i32 j = 0; j < EH_PROOF_INDICES; j += 1){
 			LOG("\t[%d] = %u\n", j, results[i].indices[j]);
 		}
+
+		u8 solution[EH_PACKED_PROOF_BYTES];
+		pack_uints(EH_PROOF_INDEX_BITS,
+			results[i].indices, EH_PROOF_INDICES,
+			solution, EH_PACKED_PROOF_BYTES);
+		print_buf("solution", solution, EH_PACKED_PROOF_BYTES);
 	}
 
 	free(partial);
@@ -712,41 +417,32 @@ void equihash_solve(blake2b_state *base_state){
 }
 
 bool equihash_check_solution(blake2b_state *base_state, u8 *solution){
-	u32 indices[BTCZ_PROOF_INDICES];
-	unpack_uints(BTCZ_PROOF_INDEX_BITS,
-		solution, BTCZ_PACKED_PROOF_BYTES,
-		indices, BTCZ_PROOF_INDICES);
+	u32 indices[EH_PROOF_INDICES];
+	unpack_uints(EH_PROOF_INDEX_BITS,
+		solution, EH_PACKED_PROOF_BYTES,
+		indices, EH_PROOF_INDICES);
 
-	PartialJoin partial[BTCZ_PROOF_INDICES];
-	for(i32 i = 0; i < BTCZ_PROOF_INDICES; i += 1){
-		u8 hash[BTCZ_BLAKE_OUTLEN];
-		generate_hash(base_state, indices[i] / 3, hash, BTCZ_BLAKE_OUTLEN);
+	PartialJoin partial[EH_PROOF_INDICES];
+	for(i32 i = 0; i < EH_PROOF_INDICES; i += 1){
+		u8 hash[EH_BLAKE_OUTLEN];
 
-		partial[i].num_hash_digits = BTCZ_HASH_DIGITS;
-		unpack_uints(BTCZ_HASH_DIGIT_BITS,
-			hash + (indices[i] % 3) * BTCZ_HASH_BYTES, BTCZ_HASH_BYTES,
-			partial[i].hash_digits, BTCZ_HASH_DIGITS);
+		i32 j = indices[i] / EH_HASHES_PER_BLAKE;
+		i32 k = indices[i] % EH_HASHES_PER_BLAKE;
+
+		generate_hash(base_state, j, hash, EH_BLAKE_OUTLEN);
+
+		partial[i].num_hash_digits = EH_HASH_DIGITS;
+		unpack_uints(EH_HASH_DIGIT_BITS,
+			hash + k * EH_HASH_BYTES, EH_HASH_BYTES,
+			partial[i].hash_digits, EH_HASH_DIGITS);
 
 		partial[i].num_indices = 1;
 		partial[i].indices[0] = indices[i];
 	}
 
-#if 0
-	// TODO: Remove.
-	{
-		for(i32 i = 0; i < BTCZ_PROOF_INDICES; i += 1){
-			printf("{%d, {", indices[i]);
-			for(i32 j = 0; j < (BTCZ_HASH_DIGITS - 1); j += 1){
-				printf("%u, ", partial[i].hash_digits[j]);
-			}
-			printf("%u}},\n", partial[i].hash_digits[BTCZ_HASH_DIGITS - 1]);
-		}
-	}
-#endif
-
-	i32 num_partial = BTCZ_PROOF_INDICES;
-	PartialJoin aux[BTCZ_PROOF_INDICES];
-	for(i32 digit = 0; digit < (BTCZ_HASH_DIGITS - 2); digit += 1){
+	i32 num_partial = EH_PROOF_INDICES;
+	PartialJoin aux[EH_PROOF_INDICES];
+	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
 		i32 num_aux = 0;
 		for(i32 i = 0; i < num_partial; i += 2){
 			if(!(partial[i].hash_digits[0] == partial[i + 1].hash_digits[0]))
@@ -775,7 +471,7 @@ bool equihash_check_solution(blake2b_state *base_state, u8 *solution){
 #if 0
 	// TODO: Remove.
 	FinalJoin result = final_join(&partial[0], &partial[1]);
-	for(i32 i = 0; i < BTCZ_PROOF_INDICES; i += 1){
+	for(i32 i = 0; i < EH_PROOF_INDICES; i += 1){
 		LOG("result.indices[%d] = %d, indices[%d] = %u, equal = %s\n",
 			i, result.indices[i], i, indices[i],
 			(result.indices[i] == indices[i]) ? "yes" : "no");
