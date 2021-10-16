@@ -211,4 +211,4 @@ static INLINE u64 decode_u64_le(u8 *data){
 
 #endif //ARCH_UNALIGNED_ACCESS
 
-#endif //BUFFER_UTIL_H_
+#endif //BUFFER_UTIL_HH_

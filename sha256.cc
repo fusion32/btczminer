@@ -1,12 +1,12 @@
 #include "common.hh"
 #include "buffer_util.hh"
 
-u32 sha256_iv[8] = {
+static const u32 sha256_iv[8] = {
 	0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
 	0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19
 };
 
-u32 sha256_k[64] = {
+static const u32 sha256_k[64] = {
 	0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
 	0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
 	0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
@@ -91,17 +91,18 @@ u256 sha256(u8 *in, i32 inlen){
 	//
 	// NOTE: At the end of the input data, we need to
 	// append a 0x80 byte followed by `num_zeros` 0x00
-	// bytes and the inlen encoded as a big-endian 64-bits
-	// number such that:
+	// bytes and the inlen_bits encoded as a big-endian
+	// 64-bits number such that
 	//	(inlen + 1 + num_zeros + 8) % 64 == 0
 	//
 	// Regardless, we'll always append 9 bytes at the end,
 	// so if the last 'block' of our input has 55 (64 - 9)
 	// or less bytes, we'll need to compress only one extra
-	// block. In the other hand if it has more than 55 bytes
+	// block. On the other hand if it has more than 55 bytes
 	// we'll need to compress two extra blocks.
 	//
 
+	u64 inlen_bits = (u64)inlen * 8;
 	if(len <= 55){
 		i32 num_zeros = 55 - len;
 		DEBUG_ASSERT(num_zeros >= 0);
@@ -110,7 +111,7 @@ u256 sha256(u8 *in, i32 inlen){
 		memcpy(&block[0], ptr, len);
 		encode_u8(&block[len], 0x80);
 		memset(&block[len + 1], 0x00, num_zeros);
-		encode_u64_be(&block[56], (u64)inlen * 8);
+		encode_u64_be(&block[56], inlen_bits);
 		sha256_compress(h, block);
 	}else{
 		DEBUG_ASSERT(len < 64);
@@ -127,19 +128,32 @@ u256 sha256(u8 *in, i32 inlen){
 
 		// 2nd block
 		memset(&block[0], 0, 56);
-		encode_u64_be(&block[56], inlen);
+		encode_u64_be(&block[56], inlen_bits);
 		sha256_compress(h, block);
 	}
 
+	// NOTE: The output is the concatenation of the h's in
+	// big endian order. However as we're returning a u256
+	// and that is stored as little endian internally, we
+	// do an extra step of inverting the output before returning.
+
+	// TODO: This is not the most efficient way of doing this
+	// but we won't be calling sha256 too many times anyways.
+
+	u8 digest[32];
+	encode_u32_be(&digest[ 0], h[0]);
+	encode_u32_be(&digest[ 4], h[1]);
+	encode_u32_be(&digest[ 8], h[2]);
+	encode_u32_be(&digest[12], h[3]);
+	encode_u32_be(&digest[16], h[4]);
+	encode_u32_be(&digest[20], h[5]);
+	encode_u32_be(&digest[24], h[6]);
+	encode_u32_be(&digest[28], h[7]);
+
 	u256 result;
-	encode_u32_be(&result.data[ 0], h[0]);
-	encode_u32_be(&result.data[ 4], h[1]);
-	encode_u32_be(&result.data[ 8], h[2]);
-	encode_u32_be(&result.data[12], h[3]);
-	encode_u32_be(&result.data[16], h[4]);
-	encode_u32_be(&result.data[20], h[5]);
-	encode_u32_be(&result.data[24], h[6]);
-	encode_u32_be(&result.data[28], h[7]);
+	for(i32 i = 0; i < 32; i += 1)
+		result.data[i] = digest[31 - i];
+
 	return result;
 }
 
@@ -167,16 +181,29 @@ int main(int argc, char **argv){
 	return 0;
 }
 #else
-int main(int argc, char **argv){
-	//const char *test1 = "";
-	//const char *test1_result = "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-	//u256 tmp = sha256((u8*)test1, (i32)strlen(test1));
-	u256 tmp = sha256(NULL, 0);
-	for(i32 i = 0; i < 32; i += 1)
-		printf("%02X ", tmp.data[i]);
 
-	//const char *test2 = "";
-	//const char *test2_result = "";
-	//sha256((u8*)test2, strlen(test2));
+static
+u256 hex_to_u256(const char *hex){
+	u256 result;
+	hex_to_buffer_inv(hex, result.data, 32);
+	return result;
+}
+
+int main(int argc, char **argv){
+	struct{
+		const char *input;
+		const char *expected;
+	} tests[] = {
+		{"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		{"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}
+	};
+
+	for(i32 i = 0; i < NARRAY(tests); i += 1){
+		const char *input = tests[i].input;
+		u256 expected = hex_to_u256(tests[i].expected);
+		u256 result = sha256((u8*)input, (i32)strlen(input));
+		LOG("test #%d: %s\n", i,
+			(result == expected) ? "passed" : "failed");
+	}
 }
 #endif
