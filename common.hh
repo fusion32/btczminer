@@ -76,17 +76,47 @@ typedef size_t		usize;
 #define LOG_ERROR(...)	fprintf(stdout, __FUNCTION__ ": " __VA_ARGS__)
 
 // ----------------------------------------------------------------
+// Utility - common.cc
+// ----------------------------------------------------------------
+void hex_to_buffer(const char *hex, u8 *buf, i32 buflen);
+void hex_to_buffer_inv(const char *hex, u8 *buf, i32 buflen);
+i32 count_hex_digits(const char *hex);
+void print_buf(const char *debug_name, u8 *buf, i32 buflen);
+
+// ----------------------------------------------------------------
 // u256
 // ----------------------------------------------------------------
 struct u256{
 	// NOTE: `data` is encoded in little endian order.
 	u8 data[32];
-
-	// NOTE: Each 32-bits word is encoded in cpu endian order.
-	// But words are ordered in little endian so `data[0]` contains
-	// the low 32 bits of the u256 and so on.
-	//u32 data[8];
 };
+
+static INLINE
+u256 hex_number_to_u256(const char *hex){
+	u256 result;
+	hex_to_buffer_inv(hex, result.data, 32);
+	return result;
+}
+
+static INLINE
+u256 hex_data_to_u256(const char *hex){
+	u256 result;
+	hex_to_buffer(hex, result.data, 32);
+	return result;
+}
+
+static INLINE
+u256 compact_to_u256(u32 compact){
+	u8 num_bytes = (u8)(compact >> 24);
+	DEBUG_ASSERT(num_bytes <= 32 && num_bytes >= 3);
+
+	u256 result;
+	memset(result.data, 0, 32);
+	result.data[num_bytes - 3] = (u8)(compact >>  0);
+	result.data[num_bytes - 2] = (u8)(compact >>  8);
+	result.data[num_bytes - 1] = (u8)(compact >> 16);
+	return result;
+}
 
 static
 bool operator>(const u256 &a, const u256 &b){
@@ -109,14 +139,6 @@ bool operator==(const u256 &a, const u256 &b){
 }
 
 // ----------------------------------------------------------------
-// Utility - main.cc
-// ----------------------------------------------------------------
-void hex_to_buffer(const char *hex, u8 *buf, i32 buflen);
-void hex_to_buffer_inv(const char *hex, u8 *buf, i32 buflen);
-i32 count_hex_digits(const char *hex);
-void print_buf(const char *debug_name, u8 *buf, i32 buflen);
-
-// ----------------------------------------------------------------
 // BLAKE2B - blake2b.cc
 // ----------------------------------------------------------------
 #define BLAKE2B_BLOCKBYTES 128
@@ -137,7 +159,8 @@ void blake2b_final(blake2b_state *S, u8 *out, u64 outlen);
 // ----------------------------------------------------------------
 // SHA-256 - sha256.cc
 // ----------------------------------------------------------------
-
+u256 sha256(u8 *in, i32 inlen);
+u256 wsha256(u8 *in, i32 inlen);
 
 // ----------------------------------------------------------------
 // Equihash - equihash.cc
@@ -154,36 +177,31 @@ void blake2b_final(blake2b_state *S, u8 *out, u64 outlen);
 #define EH_K					5
 
 #define EH_HASH_BYTES			(BITS_TO_BYTES(EH_N))
-#define EH_HASHES_PER_BLAKE		(BLAKE2B_OUTBYTES / EH_HASH_BYTES)
+#define EH_HASHES_PER_BLAKE		(BLAKE2B_OUTBYTES / EH_HASH_BYTES) // note the integer division
 #define EH_BLAKE_OUTLEN			(EH_HASHES_PER_BLAKE * EH_HASH_BYTES)
 
 #define EH_HASH_DIGITS			(EH_K + 1)
 #define EH_HASH_DIGIT_BITS		(EH_N / EH_HASH_DIGITS)
 #define EH_HASH_DIGIT_BYTES		(BITS_TO_BYTES(EH_HASH_DIGIT_BITS))
 
-#define EH_PROOF_INDEX_BITS		(EH_HASH_DIGIT_BITS + 1)
-#define EH_PROOF_INDICES		(1 << EH_K)
-#define EH_PACKED_PROOF_BYTES	(BITS_TO_BYTES(EH_PROOF_INDEX_BITS * EH_PROOF_INDICES))
+#define EH_SOLUTION_INDEX_BITS	(EH_HASH_DIGIT_BITS + 1)
+#define EH_SOLUTION_INDICES		(1 << EH_K)
+#define EH_PACKED_SOLUTION_BYTES (BITS_TO_BYTES(EH_SOLUTION_INDEX_BITS * EH_SOLUTION_INDICES))
 
-#define EH_DOMAIN				(1 << EH_PROOF_INDEX_BITS)
+#define EH_DOMAIN				(1 << EH_SOLUTION_INDEX_BITS)
 
-// NOTE: PartialJoin is meant to be used for the first (EH_HASH_DIGITS - 2)
-// digits. FinalJoin is meant to be used for the last two digits. See the equihash
-// algorithm description in `equihash.cc` for more info.
-struct PartialJoin{
-	// TODO: Both hash_digits and indices can be packed on the same
-	// array. This could lead to using dynamic memory instead of a
-	// static size.
-
-	i32 num_hash_digits;
-	u32 hash_digits[EH_HASH_DIGITS];
-
-	i32 num_indices;
-	u32 indices[EH_PROOF_INDICES / 2];
+struct EH_Solution{
+	u8 packed[EH_PACKED_SOLUTION_BYTES];
 };
 
-struct FinalJoin{
-	u32 indices[EH_PROOF_INDICES];
-};
+static INLINE
+EH_Solution hex_to_eh_solution(const char *hex){
+	EH_Solution result;
+	hex_to_buffer(hex, result.packed, EH_PACKED_SOLUTION_BYTES);
+	return result;
+}
+
+i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols);
+bool eh_check_solution(blake2b_state *base_state, EH_Solution *solution);
 
 #endif //COMMON_HH_

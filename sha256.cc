@@ -76,7 +76,8 @@ void sha256_compress(u32 *h, u8 *block){
 	h[7] += aux[7];
 }
 
-u256 sha256(u8 *in, i32 inlen){
+static
+void __sha256(u8 *in, i32 inlen, u8 *out_digest){
 	u32 h[8];
 	memcpy(h, sha256_iv, sizeof(sha256_iv));
 
@@ -132,28 +133,33 @@ u256 sha256(u8 *in, i32 inlen){
 		sha256_compress(h, block);
 	}
 
-	// NOTE: The output is the concatenation of the h's in
-	// big endian order. However as we're returning a u256
-	// and that is stored as little endian internally, we
-	// do an extra step of inverting the output before returning.
+	encode_u32_be(&out_digest[ 0], h[0]);
+	encode_u32_be(&out_digest[ 4], h[1]);
+	encode_u32_be(&out_digest[ 8], h[2]);
+	encode_u32_be(&out_digest[12], h[3]);
+	encode_u32_be(&out_digest[16], h[4]);
+	encode_u32_be(&out_digest[20], h[5]);
+	encode_u32_be(&out_digest[24], h[6]);
+	encode_u32_be(&out_digest[28], h[7]);
+}
 
-	// TODO: This is not the most efficient way of doing this
-	// but we won't be calling sha256 too many times anyways.
+// NOTE: At first I thought that we should return the sha256
+// digest in reverse order since u256 in the bitcoin codebase
+// uses a little endian representation. In reality, it doesn't
+// matter because it simply copies the output of the hash directly
+// into the u256 internal buffer.
 
-	u8 digest[32];
-	encode_u32_be(&digest[ 0], h[0]);
-	encode_u32_be(&digest[ 4], h[1]);
-	encode_u32_be(&digest[ 8], h[2]);
-	encode_u32_be(&digest[12], h[3]);
-	encode_u32_be(&digest[16], h[4]);
-	encode_u32_be(&digest[20], h[5]);
-	encode_u32_be(&digest[24], h[6]);
-	encode_u32_be(&digest[28], h[7]);
-
+u256 sha256(u8 *in, i32 inlen){
 	u256 result;
-	for(i32 i = 0; i < 32; i += 1)
-		result.data[i] = digest[31 - i];
+	__sha256(in, inlen, result.data);
+	return result;
+}
 
+u256 wsha256(u8 *in, i32 inlen){
+	u8 digest1[32];
+	__sha256(in, inlen, digest1);
+	u256 result;
+	__sha256(digest1, 32, result.data);
 	return result;
 }
 
@@ -181,29 +187,49 @@ int main(int argc, char **argv){
 	return 0;
 }
 #else
-
-static
-u256 hex_to_u256(const char *hex){
-	u256 result;
-	hex_to_buffer_inv(hex, result.data, 32);
-	return result;
-}
-
-int main(int argc, char **argv){
+int test_sha256(int argc, char **argv){
 	struct{
 		const char *input;
 		const char *expected;
 	} tests[] = {
-		{"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}
+		{
+			"",
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		},
+	
+		{
+			"abc",
+			"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+		},
+	
+		{
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH",
+
+			"815ac0ea7bc66677ca9d6a46b8cd06337acbc03f6a13fb7768e2b8ecaf352033"
+		},
+
+		{
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH"
+			"ABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGHABCDEFGH",
+
+			"6864ee1b2242c89088f9bb9d64792ee32f601d45e9d6fe6dec7c56b2f4bc0978"
+		},
 	};
 
 	for(i32 i = 0; i < NARRAY(tests); i += 1){
 		const char *input = tests[i].input;
-		u256 expected = hex_to_u256(tests[i].expected);
+		u256 expected = hex_data_to_u256(tests[i].expected);
 		u256 result = sha256((u8*)input, (i32)strlen(input));
 		LOG("test #%d: %s\n", i,
 			(result == expected) ? "passed" : "failed");
 	}
+	return 0;
 }
 #endif

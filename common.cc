@@ -82,5 +82,7 @@ void print_buf(const char *debug_name, u8 *buf, i32 buflen){
 		else
 			printf("%02X ", buf[i]);
 	}
-	printf("\n");
+
+	if(buflen & 15)
+		printf("\n");
 }
