@@ -225,7 +225,7 @@ int test_sha256(int argc, char **argv){
 
 	for(i32 i = 0; i < NARRAY(tests); i += 1){
 		const char *input = tests[i].input;
-		u256 expected = hex_data_to_u256(tests[i].expected);
+		u256 expected = hex_le_to_u256(tests[i].expected);
 		u256 result = sha256((u8*)input, (i32)strlen(input));
 		LOG("test #%d: %s\n", i,
 			(result == expected) ? "passed" : "failed");

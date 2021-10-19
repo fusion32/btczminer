@@ -132,13 +132,13 @@ int main_btcz(int argc, char **argv){
 
 	BlockHeader block_header;
 	block_header.version = version;
-	block_header.hash_prev_block = hex_number_to_u256(hash_prev_block_hex);
-	block_header.hash_merkle_root = hex_number_to_u256(hash_merkle_root_hex);
-	block_header.hash_final_sapling_root = hex_number_to_u256(hash_final_sapling_root_hex);
+	block_header.hash_prev_block = hex_be_to_u256(hash_prev_block_hex);
+	block_header.hash_merkle_root = hex_be_to_u256(hash_merkle_root_hex);
+	block_header.hash_final_sapling_root = hex_be_to_u256(hash_final_sapling_root_hex);
 	block_header.time = time;
 	block_header.bits = bits;
-	block_header.nonce = hex_number_to_u256(nonce_hex);
-	block_header.solution = hex_data_to_eh_solution(solution_hex);
+	block_header.nonce = hex_be_to_u256(nonce_hex);
+	block_header.solution = hex_to_eh_solution(solution_hex);
 
 	LOG("check_block = %d\n", btcz_check_block(&block_header));
 

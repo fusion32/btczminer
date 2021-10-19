@@ -91,15 +91,20 @@ struct u256{
 	u8 data[32];
 };
 
+// NOTE: Here hex_be refers to hex strings in big endian
+// order. That is, "AABB" hex string will translate to
+// the 0xAABB number. For hex_le it is the opposite.
+// "AABB" hex string will translate to the 0xBBAA number.
+
 static INLINE
-u256 hex_number_to_u256(const char *hex){
+u256 hex_be_to_u256(const char *hex){
 	u256 result;
 	hex_to_buffer_inv(hex, result.data, 32);
 	return result;
 }
 
 static INLINE
-u256 hex_data_to_u256(const char *hex){
+u256 hex_le_to_u256(const char *hex){
 	u256 result;
 	hex_to_buffer(hex, result.data, 32);
 	return result;
@@ -200,7 +205,7 @@ struct EH_Solution{
 };
 
 static INLINE
-EH_Solution hex_data_to_eh_solution(const char *hex){
+EH_Solution hex_to_eh_solution(const char *hex){
 	EH_Solution result;
 	hex_to_buffer(hex, result.packed, EH_PACKED_SOLUTION_BYTES);
 	return result;
