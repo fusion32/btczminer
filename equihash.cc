@@ -81,6 +81,7 @@ void unpack_uints(i32 uint_bits,
 	}
 }
 
+static
 void generate_hash(blake2b_state *base_state, u32 index, u8 *out, i32 outlen){
 	blake2b_state state = *base_state;
 	u32 le_index = u32_cpu_to_le(index);
@@ -311,8 +312,8 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 	for(i32 i = 0; i < num_partial;){
 		i32 j = 1;
 		while((i + j) < num_partial
-			&& (partial[i].hash_digits[0] == partial[i + j].hash_digits[0])
-			&& (partial[i].hash_digits[1] == partial[i + j].hash_digits[1])){
+		  && (partial[i].hash_digits[0] == partial[i + j].hash_digits[0])
+		  && (partial[i].hash_digits[1] == partial[i + j].hash_digits[1])){
 			j += 1;
 		}
 
@@ -389,16 +390,6 @@ bool eh_check_solution(blake2b_state *base_state, EH_Solution *solution){
 		return false;
 	if(!(partial[0].indices[0] < partial[1].indices[0]))
 		return false;
-
-#if 0
-	// TODO: Remove.
-	FinalJoin result = final_join(&partial[0], &partial[1]);
-	for(i32 i = 0; i < EH_PROOF_INDICES; i += 1){
-		LOG("result.indices[%d] = %d, indices[%d] = %u, equal = %s\n",
-			i, result.indices[i], i, indices[i],
-			(result.indices[i] == indices[i]) ? "yes" : "no");
-	}
-#endif
 
 	return true;
 }

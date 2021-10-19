@@ -1,6 +1,10 @@
 #include "common.hh"
 #include "buffer_util.hh"
 
+//#define BTCZ_SERIALIZED_EH_HEADER_BYTES 140
+//#define BTCZ_SERIALIZED_FULL_HEADER_BYTES 241
+
+
 #if 0
 struct JSON_BlockHeader{
 	i32 version;
@@ -62,7 +66,7 @@ void init_state(blake2b_state *state, BlockHeader *header){
 }
 
 static
-bool check_btcz_block(BlockHeader *header){
+bool btcz_check_block(BlockHeader *header){
 	static_assert(sizeof(BlockHeader) == 240, "");
 	static_assert(sizeof(EH_Solution) == 100, "");
 
@@ -91,16 +95,16 @@ bool check_btcz_block(BlockHeader *header){
 	blake2b_init_eh(&block_state, EH_PERSONAL, EH_N, EH_K);
 	blake2b_update(&block_state, buf, 140);
 	if(!eh_check_solution(&block_state, &header->solution)){
-		LOG_ERROR("not a valid equihash solution\n");
+		LOG_ERROR("invalid equihash solution\n");
 		return false;
 	}
 
 	// 2nd - Check proof-of-work.
-	u256 sha256_result = wsha256(buf, 241);
-	u256 sha256_target = compact_to_u256(header->bits);
-	print_buf("sha256_result", sha256_result.data, 32);
-	print_buf("sha256_target", sha256_target.data, 32);
-	if(sha256_result > sha256_target){
+	u256 wsha256_result = wsha256(buf, 241);
+	u256 wsha256_target = compact_to_u256(header->bits);
+	print_buf("wsha256_result", wsha256_result.data, 32);
+	print_buf("wsha256_target", wsha256_target.data, 32);
+	if(wsha256_result > wsha256_target){
 		LOG_ERROR("invalid pow\n");
 		return false;
 	}
@@ -109,10 +113,7 @@ bool check_btcz_block(BlockHeader *header){
 	return true;
 }
 
-int main(int argc, char **argv){
-	//int test_sha256(int argc, char **argv);
-	//return test_sha256(argc, argv);
-
+int main_btcz(int argc, char **argv){
 	// block = 818128
 	i32 version = 4;
 	char *hash_prev_block_hex = "0000007b753e415f80614ba8130aa4668ca4731b0539d9919c2074b43a46b9e8";
@@ -131,15 +132,15 @@ int main(int argc, char **argv){
 
 	BlockHeader block_header;
 	block_header.version = version;
-	hex_to_buffer_inv(hash_prev_block_hex, block_header.hash_prev_block.data, 32);
-	hex_to_buffer_inv(hash_merkle_root_hex, block_header.hash_merkle_root.data, 32);
-	hex_to_buffer_inv(hash_final_sapling_root_hex, block_header.hash_final_sapling_root.data, 32);
+	block_header.hash_prev_block = hex_number_to_u256(hash_prev_block_hex);
+	block_header.hash_merkle_root = hex_number_to_u256(hash_merkle_root_hex);
+	block_header.hash_final_sapling_root = hex_number_to_u256(hash_final_sapling_root_hex);
 	block_header.time = time;
 	block_header.bits = bits;
-	hex_to_buffer_inv(nonce_hex, block_header.nonce.data, 32);
-	block_header.solution = hex_to_eh_solution(solution_hex);
+	block_header.nonce = hex_number_to_u256(nonce_hex);
+	block_header.solution = hex_data_to_eh_solution(solution_hex);
 
-	LOG("check_block = %d\n", check_btcz_block(&block_header));
+	LOG("check_block = %d\n", btcz_check_block(&block_header));
 
 #if 0
 	EH_Solution sol_buffer[10];

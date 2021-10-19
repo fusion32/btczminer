@@ -190,12 +190,17 @@ u256 wsha256(u8 *in, i32 inlen);
 
 #define EH_DOMAIN				(1 << EH_SOLUTION_INDEX_BITS)
 
+// NOTE: This value is constant for any parameters of the equihash.
+// Also note that this is an average value which means the actual
+// number of solutions will not always be 2.
+//#define EH_AVG_SOLS_PER_SOLVE	2
+
 struct EH_Solution{
 	u8 packed[EH_PACKED_SOLUTION_BYTES];
 };
 
 static INLINE
-EH_Solution hex_to_eh_solution(const char *hex){
+EH_Solution hex_data_to_eh_solution(const char *hex){
 	EH_Solution result;
 	hex_to_buffer(hex, result.packed, EH_PACKED_SOLUTION_BYTES);
 	return result;
