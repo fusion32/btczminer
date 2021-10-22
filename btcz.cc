@@ -93,7 +93,30 @@ bool btcz_check_block(BlockHeader *header){
 }
 
 static
-void btcz_init_state(blake2b_state *state, MiningParams *params){
+bool btcz_check_pow_target(MiningParams *params,
+		u256 nonce, EH_Solution solution){
+	static_assert(sizeof(EH_Solution) == 100, "");
+	u8 buf[241];
+	serialize_u32(buf + 0x00, params->version);
+	serialize_u256(buf + 0x04, params->prev_hash);
+	serialize_u256(buf + 0x24, params->merkle_root);
+	serialize_u256(buf + 0x44, params->final_sapling_root);
+	serialize_u32(buf + 0x64, params->time);
+	serialize_u32(buf + 0x68, params->bits);
+	serialize_u256(buf + 0x6C, nonce);
+
+	// NOTE: This byte is because the solution is preceeded by
+	// it's length in a "compact" form. In the case of BTCZ, it
+	// is always 100 so this byte is essentially wasted.
+	encode_u8(buf + 0x8C, 0x64);
+	serialize_eh_solution(buf + 0x8D, solution);
+
+	u256 wsha256_result = wsha256(buf, 241);
+	return !(wsha256_result > params->target);
+}
+
+static
+void btcz_state_init(blake2b_state *state, MiningParams *params){
 	u8 buf[108];
 	serialize_u32(buf + 0x00, params->version);
 	serialize_u256(buf + 0x04, params->prev_hash);
@@ -107,19 +130,21 @@ void btcz_init_state(blake2b_state *state, MiningParams *params){
 }
 
 static
-void btcz_add_nonce(blake2b_state *state, u256 nonce){
+void btcz_state_add_nonce(blake2b_state *state, u256 nonce){
 	u8 buf[32];
 	serialize_u256(buf, nonce);
 	blake2b_update(state, buf, 32);
 }
 
 static
-void btcz_init_nonce(MiningParams *params, u256 *nonce){
+void btcz_nonce_init(MiningParams *params, u256 *nonce){
+	// TODO: Maybe use a random value to initialize the
+	// nonce2 part.
 	*nonce = params->nonce1;
 }
 
 static
-void btcz_increase_nonce(MiningParams *params, u256 *nonce){
+void btcz_nonce_increase(MiningParams *params, u256 *nonce){
 	// NOTE: Realistically the nonce won't wrap, given that
 	// the time for a block is ~2.5 minutes. So we don't need
 	// to report that kind of event since it won't happen.
@@ -155,17 +180,18 @@ int main(int argc, char **argv){
 		return -1;
 	}
 
+	LOG("connected...\n");
 	while(1){
 		LOG("job_id: %s\n", params.job_id);
 		blake2b_state base_state;
-		btcz_init_state(&base_state, &params);
+		btcz_state_init(&base_state, &params);
 
 		u256 nonce;
-		btcz_init_nonce(&params, &nonce);
+		btcz_nonce_init(&params, &nonce);
 		while(1){
 			// prepare blake2b state for the current nonce
 			blake2b_state cur_state = base_state;
-			btcz_add_nonce(&cur_state, nonce);
+			btcz_state_add_nonce(&cur_state, nonce);
 
 			// solve the equihash
 			EH_Solution sols[8];
@@ -180,7 +206,11 @@ int main(int argc, char **argv){
 			// submit results
 			LOG("num_sols = %d\n", num_sols);
 			for(i32 i = 0; i < num_sols; i += 1){
-				LOG("sending sol %d\n", i);
+				if(!btcz_check_pow_target(&params, nonce, sols[i])){
+					LOG("sol %d: pow above target\n", i);
+					continue;
+				}
+				LOG("sending sol %d...\n", i);
 				if(!btcz_stratum_submit_solution(S, &params, nonce, sols[i]))
 					LOG_ERROR("failed to submit solution %d\n", i);
 			}
@@ -192,7 +222,7 @@ int main(int argc, char **argv){
 				break;
 
 			// increase nonce
-			btcz_increase_nonce(&params, &nonce);
+			btcz_nonce_increase(&params, &nonce);
 		}
 	}
 	return 0;

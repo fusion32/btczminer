@@ -217,8 +217,6 @@ bool send_command_submit(
 		return false;
 	}
 
-	LOG("submit buf: %s\n", buf);
-
 	S->next_id += 1;
 	S->submit_id = id;
 	S->num_sent_command_submit += 1;
@@ -427,8 +425,6 @@ bool consume_messages(STRATUM *S){
 		buf[ret - 1] = 0;
 		JSON_State json = json_init((u8*)buf);
 
-		LOG("%s\n", buf);
-
 		while(json_consume_token(&json, NULL, '{')){
 			JSON_Token tok;
 			if(!json_consume_key(&json, "id")
@@ -621,8 +617,6 @@ STRATUM *btcz_stratum_connect(
 		closesocket(server);
 		return NULL;
 	}
-
-	LOG("connected...\n");
 
 	STRATUM *S = (STRATUM*)malloc(sizeof(STRATUM));
 	memset(S, 0, sizeof(STRATUM));
