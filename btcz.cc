@@ -45,27 +45,6 @@ void serialize_eh_solution(u8 *buffer, EH_Solution solution){
 }
 
 static
-void init_state(blake2b_state *state, BlockHeader *header){
-	// TODO: Init state without the nonce then add the nonce
-	// after. This way we'll save the work of re-initializing
-	// the whole BLAKE2B state.
-
-	u8 buf[140];
-	serialize_u32(buf + 0x00, header->version);
-	serialize_u256(buf + 0x04, header->hash_prev_block);
-	serialize_u256(buf + 0x24, header->hash_merkle_root);
-	serialize_u256(buf + 0x44, header->hash_final_sapling_root);
-	serialize_u32(buf + 0x64, header->time);
-	serialize_u32(buf + 0x68, header->bits);
-	serialize_u256(buf + 0x6C, header->nonce);
-
-	print_buf("block_header", buf, 140);
-
-	blake2b_init_eh(state, EH_PERSONAL, EH_N, EH_K);
-	blake2b_update(state, buf, 140);
-}
-
-static
 bool btcz_check_block(BlockHeader *header){
 	static_assert(sizeof(BlockHeader) == 240, "");
 	static_assert(sizeof(EH_Solution) == 100, "");
@@ -113,45 +92,108 @@ bool btcz_check_block(BlockHeader *header){
 	return true;
 }
 
-int main_btcz(int argc, char **argv){
-	// block = 818128
-	i32 version = 4;
-	char *hash_prev_block_hex = "0000007b753e415f80614ba8130aa4668ca4731b0539d9919c2074b43a46b9e8";
-	char *hash_merkle_root_hex = "6b2198b49e2055535c403830a3c124a8c235004b4662901010bc0927c43979ec";
-	char *hash_final_sapling_root_hex = "189df3ceb26643f3b90ec7059316c7ccb26aeaf1e96559c63b8c6d52f04e79b5";
-	u32 time = 1632007626;
-	u32 bits = 0x1e009cb8;
-	char *nonce_hex = "81b601c200000000000000006dcdf558dd65a0dd9e68012952b8df1003cefade";
-	char *solution_hex = "02969d2baea1d4f46df3ddfc40b270b99edba12611cdc547990c8225d18f09ab96da59fd028558e4ab5f6e6e7e1469c2723a089789e121944d2ee7a89f0f92187d821ddd9694eff1579ec92d52e3fd4ee4d0bb522f560c7378bbef28efa9fd39ff112128";
+static
+void btcz_init_state(blake2b_state *state, MiningParams *params){
+	u8 buf[108];
+	serialize_u32(buf + 0x00, params->version);
+	serialize_u256(buf + 0x04, params->prev_hash);
+	serialize_u256(buf + 0x24, params->merkle_root);
+	serialize_u256(buf + 0x44, params->final_sapling_root);
+	serialize_u32(buf + 0x64, params->time);
+	serialize_u32(buf + 0x68, params->bits);
 
-	DEBUG_ASSERT(count_hex_digits(hash_prev_block_hex) == 64);
-	DEBUG_ASSERT(count_hex_digits(hash_merkle_root_hex) == 64);
-	DEBUG_ASSERT(count_hex_digits(hash_final_sapling_root_hex) == 64);
-	DEBUG_ASSERT(count_hex_digits(nonce_hex) == 64);
-	DEBUG_ASSERT(count_hex_digits(solution_hex) == 200);
+	blake2b_init_eh(state, EH_PERSONAL, EH_N, EH_K);
+	blake2b_update(state, buf, 108);
+}
 
-	BlockHeader block_header;
-	block_header.version = version;
-	block_header.hash_prev_block = hex_be_to_u256(hash_prev_block_hex);
-	block_header.hash_merkle_root = hex_be_to_u256(hash_merkle_root_hex);
-	block_header.hash_final_sapling_root = hex_be_to_u256(hash_final_sapling_root_hex);
-	block_header.time = time;
-	block_header.bits = bits;
-	block_header.nonce = hex_be_to_u256(nonce_hex);
-	block_header.solution = hex_to_eh_solution(solution_hex);
+static
+void btcz_add_nonce(blake2b_state *state, u256 nonce){
+	u8 buf[32];
+	serialize_u256(buf, nonce);
+	blake2b_update(state, buf, 32);
+}
 
-	LOG("check_block = %d\n", btcz_check_block(&block_header));
+static
+void btcz_init_nonce(MiningParams *params, u256 *nonce){
+	*nonce = params->nonce1;
+}
 
-#if 0
-	EH_Solution sol_buffer[10];
-	i32 max_sols = NARRAY(sol_buffer);
-	i32 num_sols = eh_solve(&block_state, sol_buffer, max_sols);
-	LOG("num_sols = %d\n", num_sols);
-	num_sols = i32_min(num_sols, max_sols);
-	for(i32 i = 0; i < num_sols; i += 1){
-		LOG("solution #%d:\n", i);
-		print_buf("solution", sol_buffer[i].packed, EH_PACKED_SOLUTION_BYTES);
+static
+void btcz_increase_nonce(MiningParams *params, u256 *nonce){
+	// NOTE: Realistically the nonce won't wrap, given that
+	// the time for a block is ~2.5 minutes. So we don't need
+	// to report that kind of event since it won't happen.
+
+	for(i32 i = params->nonce1_bytes; i < 32; i += 1){
+		nonce->data[i] += 1;
+		if(nonce->data[i] != 0)
+			return;
 	}
-#endif
+}
+
+int main(int argc, char **argv){
+	// NOTE: We're currently only figuring out the protocol and one
+	// of the BTCZ mining pools is https://btcz.darkfibermines.com/
+	// and it'll be the one we'll test the protocol.
+
+	// NOTE: Big endian is used for network byte order so whenever we
+	// use htons or htonl, we're actually converting from the cpu native
+	// byte order into big endian byte order. If the native byte order
+	// is already big endian, no convertion is done.
+
+	const char *connect_addr = "142.4.211.28";
+	const char *connect_port = "4000";
+	const char *user = "t1Rxx8pUgs29isFXV8mjDPuBbNf22SDqZGq";
+	const char *password = "x";
+
+	MiningParams params;
+	STRATUM *S = btcz_stratum_connect(
+			connect_addr, connect_port,
+			user, password, &params);
+	if(!S){
+		LOG_ERROR("failed to connect to pool\n");
+		return -1;
+	}
+
+	while(1){
+		LOG("job_id: %s\n", params.job_id);
+		blake2b_state base_state;
+		btcz_init_state(&base_state, &params);
+
+		u256 nonce;
+		btcz_init_nonce(&params, &nonce);
+		while(1){
+			// prepare blake2b state for the current nonce
+			blake2b_state cur_state = base_state;
+			btcz_add_nonce(&cur_state, nonce);
+
+			// solve the equihash
+			EH_Solution sols[8];
+			i32 max_sols = NARRAY(sols);
+			i32 num_sols = eh_solve(&base_state, sols, max_sols);
+			if(num_sols > max_sols){
+				LOG("missed %d solutions (max_sols = %d, num_sols = %d)\n",
+					(num_sols - max_sols), max_sols, num_sols);
+				num_sols = max_sols;
+			}
+
+			// submit results
+			LOG("num_sols = %d\n", num_sols);
+			for(i32 i = 0; i < num_sols; i += 1){
+				LOG("sending sol %d\n", i);
+				if(!btcz_stratum_submit_solution(S, &params, nonce, sols[i]))
+					LOG_ERROR("failed to submit solution %d\n", i);
+			}
+
+			// the server updated our mining params so we should
+			// re-init the blake2b_state and the nonce with the
+			// new params
+			if(btcz_stratum_update_params(S, &params))
+				break;
+
+			// increase nonce
+			btcz_increase_nonce(&params, &nonce);
+		}
+	}
 	return 0;
 }

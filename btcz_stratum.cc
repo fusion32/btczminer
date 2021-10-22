@@ -10,8 +10,11 @@
 
 struct STRATUM{
 	SOCKET server;
+	const char *connect_addr;
+	const char *connect_port;
+	const char *user;
+	const char *password;
 
-	//
 	// NOTE: We need to keep an id counter (next_id) for
 	// each message we send the server. We also need to
 	// keep the id of the latest id we used to send a
@@ -20,7 +23,6 @@ struct STRATUM{
 	// response we should parse. This is mostly because
 	// the protocol permits sending and receiving messages
 	// out of order.
-	//
 	i32 next_id;
 	i32 subscribe_id;
 	i32 authorize_id;
@@ -36,28 +38,11 @@ struct STRATUM{
 	i32 num_recv_command_set_target;
 	i32 num_recv_command_notify;
 
-
-	// NOTE: All data required to mine.
-
-	// subscribe response
-	u256 nonce1;
-	u32 nonce1_bytes;
-
-	// set_target command
-	u256 target;
-
-	// notify command
-	u32 job;
-	u32 version;
-	u256 prev_hash;
-	u256 merkle_root;
-	u256 final_sapling_root;
-	u32 time;
-	u32 bits;
+	bool update_params;
+	MiningParams params;
 };
 
 struct ServerResponse{
-	// NOTE: These are the same for every response.
 	bool result;
 	bool error_is_null;
 	i32 error_code;
@@ -66,17 +51,86 @@ struct ServerResponse{
 };
 
 // ----------------------------------------------------------------
+// some extra utility
+// ----------------------------------------------------------------
+
+static
+void string_copy(char *dest, i32 dest_len, char *source){
+	i32 copy_len = (i32)strlen(source);
+	if(copy_len >= dest_len)
+		copy_len = dest_len - 1;
+	memcpy(dest, source, copy_len);
+	dest[copy_len] = 0;
+}
+
+static
+u32 hex_le_to_u32(const char *hex){
+	u8 le_number[4];
+	hex_to_buffer(hex, le_number, 4);
+	u32 result = decode_u32_le(le_number);
+	return result;
+}
+
+static
+char hexch(u8 digit){
+	if(digit <= 0x09){
+		return '0' + digit;
+	}else if(digit <= 0x0F){
+		return 'a' - 0x0A + digit;
+	}else{
+		return '?';
+	}
+}
+
+static
+void __u8_to_hex(char *dest, u8 source){
+	dest[1] = hexch((source >> 0) & 0x0F);
+	dest[0] = hexch((source >> 4) & 0x0F);
+}
+
+static
+void u32_to_hex_le(char *dest, u32 source){
+	__u8_to_hex(dest + 0, (u8)(source >>  0));
+	__u8_to_hex(dest + 2, (u8)(source >>  8));
+	__u8_to_hex(dest + 4, (u8)(source >> 16));
+	__u8_to_hex(dest + 6, (u8)(source >> 24));
+	dest[8] = 0;
+}
+
+static
+void u256_to_hex_le(char *dest, u256 source, i32 source_offset){
+	i32 insert_pos = 0;
+	for(i32 i = source_offset; i < 32; i += 1){
+		__u8_to_hex(dest + insert_pos, source.data[i]);
+		insert_pos += 2;
+	}
+	dest[insert_pos] = 0;
+}
+
+static
+void eh_solution_to_hex(char *dest, EH_Solution source){
+	// NOTE: This will work for BTCZ only since this length
+	// that is added at the beggining is in "compact" form
+	// and can be larger than 1 byte.
+	DEBUG_ASSERT(EH_PACKED_SOLUTION_BYTES == 0x64);
+	__u8_to_hex(dest, EH_PACKED_SOLUTION_BYTES);
+	for(i32 i = 0; i < EH_PACKED_SOLUTION_BYTES; i += 1)
+		__u8_to_hex(dest + 2 * (i + 1), source.packed[i]);
+	dest[2 * (EH_PACKED_SOLUTION_BYTES + 1)] = 0;
+}
+
+// ----------------------------------------------------------------
 // (client -> server) message handling
 // ----------------------------------------------------------------
 
 static
-bool send_subscribe_command(STRATUM *S, const char *user_agent,
+bool send_command_subscribe(STRATUM *S, const char *user_agent,
 		const char *connect_addr, const char *connect_port){
 	static const char fmt_subscribe[] =
 		"{"
-			"\"id\": %d,"
-			"\"method\": \"mining.subscribe\","
-			"\"params\": [\"%s\", null, \"%s\", \"%s\"]"
+			"\"id\":%d,"
+			"\"method\":\"mining.subscribe\","
+			"\"params\":[\"%s\", null, \"%s\", \"%s\"]"
 		"}\n";
 
 	char buf[2048];
@@ -99,19 +153,19 @@ bool send_subscribe_command(STRATUM *S, const char *user_agent,
 }
 
 static
-bool send_authorize_command(STRATUM *S,
+bool send_command_authorize(STRATUM *S,
 		const char *user, const char *password){
 	static const char fmt_authorize[] =
 		"{"
-			"\"id\": %d,"
-			"\"method\": \"mining.authorize\","
-			"\"params\": [\"%s\", \"%s\"]"
+			"\"id\":%d,"
+			"\"method\":\"mining.authorize\","
+			"\"params\":[\"%s\", \"%s\"]"
 		"}\n";
 
 	char buf[2048];
 	i32 id = S->next_id;
-	int writelen = snprintf(buf, sizeof(buf),
-			fmt_authorize, id, user, password);
+	int writelen = snprintf(buf, sizeof(buf), fmt_authorize,
+			id, user, password);
 	DEBUG_ASSERT(writelen < sizeof(buf));
 
 	int ret = send(S->server, buf, writelen, 0);
@@ -127,44 +181,57 @@ bool send_authorize_command(STRATUM *S,
 	return true;
 }
 
-#if 0
 static
-void send_submit_command(STRATUM *S){
-	// ANSWER: {"id": $, "result": true, "error": null}
-	// PARAMS: ["user", "job_id", "time", "nonce2", "eh_solution"]
-	static const char fmt_c2s_submit[] =
+bool send_command_submit(
+		STRATUM *S, MiningParams *params,
+		u256 nonce, EH_Solution eh_solution){
+	static const char fmt_submit[] =
 		"{"
-			"\"id\": %d,"
-			"\"method\": \"mining.submit\","
-			"\"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"]"
+			"\"id\":%d,"
+			"\"method\":\"mining.submit\","
+			"\"params\":[\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"]"
 		"}\n";
+
+	char hex_time[32];
+	u32_to_hex_le(hex_time, params->time);
+
+	char hex_nonce[128];
+	u256_to_hex_le(hex_nonce, nonce, params->nonce1_bytes);
+
+	// NOTE: These will do for BTCZ only since the packed solution for
+	// ZEC is 1344 bytes which translates to 2688 hex characters.
+	char hex_sol[256];
+	eh_solution_to_hex(hex_sol, eh_solution);
+
+
+	char buf[2048];
+	i32 id = S->next_id;
+	int writelen = snprintf(buf, sizeof(buf), fmt_submit,
+			id, S->user, params->job_id, hex_time, hex_nonce, hex_sol);
+	DEBUG_ASSERT(writelen < sizeof(buf));
+
+	int ret = send(S->server, buf, writelen, 0);
+	if(ret <= 0){
+		LOG_ERROR("send failed (ret = %d, error = %d)\n",
+			ret, WSAGetLastError());
+		return false;
+	}
+
+	LOG("submit buf: %s\n", buf);
+
+	S->next_id += 1;
+	S->submit_id = id;
+	S->num_sent_command_submit += 1;
+	return true;
 }
-#endif
 
 // ----------------------------------------------------------------
 // (server -> client) message handling
 // ----------------------------------------------------------------
 
 static
-void string_copy(char *dest, i32 dest_len, char *source){
-	i32 copy_len = (i32)strlen(source);
-	if(copy_len >= dest_len)
-		copy_len = dest_len - 1;
-	memcpy(dest, source, copy_len);
-	dest[copy_len] = 0;
-}
-
-static
-u32 hex_le_to_u32(const char *hex){
-	u8 le_number[4];
-	hex_to_buffer(hex, le_number, 4);
-	u32 result = decode_u32_le(le_number);
-	return result;
-}
-
-static
 bool parse_server_response_subscribe_result(
-		JSON_State *json, ServerResponse *response, STRATUM *S){
+		JSON_State *json, ServerResponse *response, MiningParams *params){
 	JSON_Token tok;
 	if(!json_consume_either(json, &tok, TOKEN_NULL, '['))
 		return false;
@@ -178,9 +245,9 @@ bool parse_server_response_subscribe_result(
 		// nonce1
 		if(!json_consume_token(json, &tok, TOKEN_STRING))
 			return false;
-		S->nonce1 = hex_le_to_u256(tok.token_string);
-		S->nonce1_bytes = count_hex_digits(tok.token_string) / 2;
-		if(S->nonce1_bytes & 2)
+		params->nonce1 = hex_le_to_u256(tok.token_string);
+		params->nonce1_bytes = count_hex_digits(tok.token_string) / 2;
+		if(params->nonce1_bytes & 2)
 			return false;
 
 		if(!json_consume_token(json, NULL, ']'))
@@ -192,9 +259,13 @@ bool parse_server_response_subscribe_result(
 static
 bool parse_server_response_common_result(JSON_State *json, ServerResponse *response){
 	JSON_Token tok;
-	if(!json_consume_boolean(json, &tok))
+	if(json_consume_boolean(json, &tok)){
+		response->result = tok.token_boolean;
+		return true;
+	}
+	if(!json_consume_token(json, NULL, TOKEN_NULL))
 		return false;
-	response->result = tok.token_boolean;
+	response->result = false;
 	return true;
 }
 
@@ -216,22 +287,24 @@ bool parse_server_response_error(JSON_State *json, ServerResponse *response){
 	response->error_code = (i32)tok.token_number;
 
 	// error_message
-	if(!json_consume_token(json, &tok, TOKEN_STRING)
-	|| !json_consume_token(json, NULL, ','))
+	if(!json_consume_token(json, &tok, TOKEN_STRING))
 		return false;
 	string_copy(response->error_message,
 		sizeof(response->error_message),
 		tok.token_string);
 
-	// error_traceback (skip for now)
-	if(!json_consume_token(json, NULL, TOKEN_STRING))
+	// NOTE: This error traceback seems to be optional and
+	// since we aren't interested in it we'll parse it when
+	// it's there but we'll ignore it always.
+	if(json_consume_token(json, NULL, ',')
+	&& !json_consume_token(json, NULL, TOKEN_STRING))
 		return false;
 
 	return json_consume_token(json, NULL, ']');
 }
 
 static
-bool parse_server_command_set_target(JSON_State *json, STRATUM *S){
+bool parse_server_command_set_target(JSON_State *json, MiningParams *params){
 	// NOTE: The target here must be parsed in big endian order.
 	// This is really confusing since other u256s are parsed in
 	// little endian order.
@@ -242,12 +315,12 @@ bool parse_server_command_set_target(JSON_State *json, STRATUM *S){
 	|| !json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ']'))
 		return false;
-	S->target = hex_be_to_u256(tok.token_string);
+	params->target = hex_be_to_u256(tok.token_string);
 	return true;
 }
 
 static
-bool parse_server_command_notify(JSON_State *json, STRATUM *S){
+bool parse_server_command_notify(JSON_State *json, MiningParams *params){
 	// NOTE: All hex strings here must be parsed in little endian
 	// order.
 
@@ -265,43 +338,43 @@ bool parse_server_command_notify(JSON_State *json, STRATUM *S){
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->job = hex_le_to_u32(tok.token_string);
+	string_copy(params->job_id, sizeof(params->job_id), tok.token_string);
 
 	// version
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->version = hex_le_to_u32(tok.token_string);
+	params->version = hex_le_to_u32(tok.token_string);
 
 	// prev_hash
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->prev_hash = hex_le_to_u256(tok.token_string);
+	params->prev_hash = hex_le_to_u256(tok.token_string);
 
 	// merkle_root
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->merkle_root = hex_le_to_u256(tok.token_string);
+	params->merkle_root = hex_le_to_u256(tok.token_string);
 
 	// final_sapling_root
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->final_sapling_root = hex_le_to_u256(tok.token_string);
+	params->final_sapling_root = hex_le_to_u256(tok.token_string);
 
 	// time
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->time = hex_le_to_u32(tok.token_string);
+	params->time = hex_le_to_u32(tok.token_string);
 
 	// bits
 	if(!json_consume_token(json, &tok, TOKEN_STRING)
 	|| !json_consume_token(json, NULL, ','))
 		return false;
-	S->bits = hex_le_to_u32(tok.token_string);
+	params->bits = hex_le_to_u32(tok.token_string);
 
 	// clean_jobs
 	if(!json_consume_boolean(json, &tok))
@@ -316,7 +389,6 @@ bool parse_server_command_notify(JSON_State *json, STRATUM *S){
 	if(json_consume_token(json, NULL, ',')
 	&& !json_consume_boolean(json, &tok))
 		return false;
-	//S->unknown = tok.token_boolean;
 
 	return json_consume_token(json, NULL, ']');
 }
@@ -355,6 +427,8 @@ bool consume_messages(STRATUM *S){
 		buf[ret - 1] = 0;
 		JSON_State json = json_init((u8*)buf);
 
+		LOG("%s\n", buf);
+
 		while(json_consume_token(&json, NULL, '{')){
 			JSON_Token tok;
 			if(!json_consume_key(&json, "id")
@@ -371,7 +445,7 @@ bool consume_messages(STRATUM *S){
 				ServerResponse response;
 				if(response_id == S->subscribe_id){
 					// subscribe response
-					if(!parse_server_response_subscribe_result(&json, &response, S)
+					if(!parse_server_response_subscribe_result(&json, &response, &S->params)
 					|| !json_consume_token(&json, NULL, ',')
 					|| !json_consume_key(&json, "error")
 					|| !parse_server_response_error(&json, &response))
@@ -435,14 +509,16 @@ bool consume_messages(STRATUM *S){
 
 				if(strcmp("mining.set_target", tok.token_string) == 0){
 					// set_target
-					if(!parse_server_command_set_target(&json, S))
+					if(!parse_server_command_set_target(&json, &S->params))
 						return false;
 					S->num_recv_command_set_target += 1;
+					S->update_params = true;
 				}else if(strcmp("mining.notify", tok.token_string) == 0){
 					// notify
-					if(!parse_server_command_notify(&json, S))
+					if(!parse_server_command_notify(&json, &S->params))
 						return false;	
 					S->num_recv_command_notify += 1;
+					S->update_params = true;
 				}else{
 					return false;
 				}
@@ -464,12 +540,12 @@ bool handshake(STRATUM *S,
 		const char *connect_addr, const char *connect_port,
 		const char *user, const char *password){
 
-	if(!send_subscribe_command(S, "BTCZRefMiner/0.1", connect_addr, connect_port)){
+	if(!send_command_subscribe(S, "BTCZRefMiner/0.1", connect_addr, connect_port)){
 		LOG_ERROR("failed to send `subscribe` message\n");
 		return false;
 	}
 
-	if(!send_authorize_command(S, user, password)){
+	if(!send_command_authorize(S, user, password)){
 		LOG_ERROR("failed to send `authorize` message\n");
 		return false;
 	}
@@ -486,35 +562,51 @@ bool handshake(STRATUM *S,
 	return true;
 }
 
-int main(int argc, char **argv){
-	// NOTE: We're currently only figuring out the protocol and one
-	// of the BTCZ mining pools is https://btcz.darkfibermines.com/
-	// and it'll be the one we'll test the protocol.
+static
+bool parse_ip_string(const char *str, u32 *out){
+	u32 ip0, ip1, ip2, ip3;
+	if(sscanf(str, "%u.%u.%u.%u", &ip0, &ip1, &ip2, &ip3) != 4)
+		return false;
+	if(ip0 > 255 || ip1 > 255 || ip2 > 255 || ip3 > 255)
+		return false;
+	*out = (ip0 << 0) | (ip1 << 8) | (ip2 << 16) | (ip3 << 24);
+	return true;
+}
 
-	// NOTE: Big endian is used for network byte order so whenever we
-	// use htons or htonl, we're actually converting from the cpu native
-	// byte order into big endian byte order. If the native byte order
-	// is already big endian, no convertion is done.
+static
+bool parse_port_string(const char *str, u16 *out){
+	u32 port;
+	if(sscanf(str, "%u", &port) != 1)
+		return false;
+	if(port > 0xFFFF)
+		return false;
+	*out = u16_cpu_to_be((u16)port);
+	return true;
+}
 
-	const char *user = "t1Rxx8pUgs29isFXV8mjDPuBbNf22SDqZGq";
-	const char *password = "x";
-	const char *connect_addr = "142.4.211.28";
-	const char *connect_port = "4000";
+STRATUM *btcz_stratum_connect(
+		const char *connect_addr,
+		const char *connect_port,
+		const char *user,
+		const char *password,
+		MiningParams *out_params){
 
-	u8 server_ipv4_addr[4] = { 142, 4, 211, 28 };
-	u32 server_addr =
-		  ((u32)server_ipv4_addr[0] << 0)
-		| ((u32)server_ipv4_addr[1] << 8)
-		| ((u32)server_ipv4_addr[2] << 16)
-		| ((u32)server_ipv4_addr[3] << 24);
-	//u32 server_addr = decode_u32_le(server_ipv4_addr);
-	u16 server_port = htons(4000);
+	u32 server_addr;
+	u16 server_port;
+	if(!parse_ip_string(connect_addr, &server_addr)){
+		LOG_ERROR("failed to parse server address\n");
+		return NULL;
+	}
+	if(!parse_port_string(connect_port, &server_port)){
+		LOG_ERROR("failed to parse server port");
+		return NULL;
+	}
 
 	SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 	if(server == INVALID_SOCKET){
 		LOG_ERROR("failed to create server socket (error = %d)\n",
 			WSAGetLastError());
-		return -1;
+		return NULL;
 	}
 
 	sockaddr_in addr;
@@ -526,28 +618,57 @@ int main(int argc, char **argv){
 		LOG_ERROR("failed to connect to server"
 			" (ret = %d, error = %d)\n",
 			ret, WSAGetLastError());
-		return -1;
+		closesocket(server);
+		return NULL;
 	}
 
 	LOG("connected...\n");
 
-	STRATUM S = {};
-	S.server = server;
-	S.next_id = 1;
-	if(!handshake(&S, connect_addr, connect_port, user, password)){
+	STRATUM *S = (STRATUM*)malloc(sizeof(STRATUM));
+	memset(S, 0, sizeof(STRATUM));
+	S->server = server;
+	S->connect_addr = connect_addr;
+	S->connect_port = connect_port;
+	S->user = user;
+	S->password = password;
+	S->next_id = 1;
+	if(!handshake(S, connect_addr, connect_port, user, password)){
 		LOG_ERROR("failed to do server handshake\n");
-		return -1;
+		closesocket(server);
+		free(S);
+		return NULL;
 	}
+	*out_params = S->params;
+	return S;
+}
 
-	LOG("handshake... ok\n");
+bool btcz_stratum_submit_solution(
+		STRATUM *S, MiningParams *params,
+		u256 nonce, EH_Solution solution){
+	// TODO: We should do a submit queue.
+	if(!send_command_submit(S, params, nonce, solution))
+		return false;
 
-	// TODO: receive submit commands from the mining thread
-	// and consume mining parameters from the server to feed
-	// the mining thread
-	//consume_messages(&S);
+	i32 prev = S->num_recv_response_submit;
+	while(prev == S->num_recv_response_submit){
+		if(!consume_messages(S))
+			return false;
+	}
+	return true;
+}
 
-	closesocket(S.server);
-	return 0;
+bool btcz_stratum_update_params(
+		STRATUM *S, MiningParams *out_params){
+	if(!consume_messages(S)){
+		LOG_ERROR("failed to consume server messages\n");
+		return false;
+	}
+	if(S->update_params){
+		S->update_params = false;
+		*out_params = S->params;
+		return true;
+	}
+	return false;
 }
 
 struct WSAInit{

@@ -186,10 +186,10 @@ bool json_consume_boolean(JSON_State *state, JSON_Token *tok){
 }
 
 bool json_consume_key(JSON_State *state, const char *key){
-	JSON_Token tok;
-	if(!json_consume_token(state, &tok, TOKEN_STRING))
-		return false;
-	if(!json_consume_token(state, NULL, ':'))
-		return false;
-	return strcmp(key, tok.token_string) == 0;
+	if(state->tok.token == TOKEN_STRING
+	&& strcmp(key, state->tok.token_string) == 0){
+		json_next_token(state, &state->tok);
+		return json_consume_token(state, NULL, ':');
+	}
+	return false;
 }

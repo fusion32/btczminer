@@ -46,7 +46,8 @@ void blake2b_init_eh(blake2b_state *S, const char *personal, u32 N, u32 K){
 	encode_u32_le(params + 56, N);
 	encode_u32_le(params + 60, K);
 
-#if BUILD_DEBUG
+#if 0
+	// TODO: Remove.
 	for(i32 i = 0; i < sizeof(params); i += 4){
 		LOG("%02X, %02X, %02X, %02X\n",
 			params[i + 0], params[i + 1],

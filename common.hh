@@ -214,4 +214,37 @@ EH_Solution hex_to_eh_solution(const char *hex){
 i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols);
 bool eh_check_solution(blake2b_state *base_state, EH_Solution *solution);
 
+// ----------------------------------------------------------------
+// BitcoinZ STRATUM - btcz_stratum.cc
+// ----------------------------------------------------------------
+
+struct MiningParams{
+	char job_id[16];
+	u32 version;
+	u256 prev_hash;
+	u256 merkle_root;
+	u256 final_sapling_root;
+	u32 time;
+	u32 bits;
+
+	i32 nonce1_bytes;
+	u256 nonce1;
+	u256 target;
+};
+
+struct STRATUM;
+STRATUM *btcz_stratum_connect(
+		const char *connect_addr,
+		const char *connect_port,
+		const char *user,
+		const char *password,
+		MiningParams *out_params);
+
+bool btcz_stratum_submit_solution(
+		STRATUM *S, MiningParams *params,
+		u256 nonce, EH_Solution solution);
+
+bool btcz_stratum_update_params(
+		STRATUM *S, MiningParams *inout_params);
+
 #endif //COMMON_HH_

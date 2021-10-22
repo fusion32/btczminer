@@ -86,3 +86,24 @@ void print_buf(const char *debug_name, u8 *buf, i32 buflen){
 	if(buflen & 15)
 		printf("\n");
 }
+
+static
+void u32_to_hex_le(char *dest, i32 dest_len, u32 source){
+	DEBUG_ASSERT(dest_len >= 9);
+	for(i32 i = 0; i < 4; i += 1){
+		u8 b = source >> (i * 8);
+		//dest[i*2 + 0] = source >>;
+	}
+	dest[0] = (char)((source >> 0));
+	dest[8] = 0;
+}
+
+static
+void u256_to_hex_le(char *dest, i32 dest_len, u256 source){
+	//
+}
+
+static
+void eh_solution_to_hex(char *dest, i32 dest_len, EH_Solution source){
+	//
+}

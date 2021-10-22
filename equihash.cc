@@ -90,14 +90,26 @@ void generate_hash(blake2b_state *base_state, u32 index, u8 *out, i32 outlen){
 }
 
 static
+bool eh__digits_cmp_less(u32 *a, u32 *b, i32 num_digits){
+	for(i32 i = 0; i < num_digits; i += 1){
+		if(a[i] < b[i])
+			return true;
+		if(a[i] > b[i])
+			return false;
+	}
+	return false;
+}
+
+static
 void eh__merge_sort_aux(
 		PartialJoin *array, PartialJoin *aux,
-		i32 first, i32 last){
+		i32 num_digits, i32 first, i32 last){
 	i32 num = last - first + 1;
 	if(num <= 1){
 		return;
 	}else if(num == 2){
-		if(array[last].hash_digits[0] < array[first].hash_digits[0]){
+		if(eh__digits_cmp_less(array[last].hash_digits,
+				array[first].hash_digits, num_digits)){
 			PartialJoin tmp = array[first];
 			array[first] = array[last];
 			array[last] = tmp;
@@ -111,8 +123,8 @@ void eh__merge_sort_aux(
 	i32 half2_first = mid + 1;
 	i32 half2_last = last;
 	memcpy(aux + first, array + first, sizeof(PartialJoin) * num);
-	eh__merge_sort_aux(aux, array, half1_first, half1_last);
-	eh__merge_sort_aux(aux, array, half2_first, half2_last);
+	eh__merge_sort_aux(aux, array, num_digits, half1_first, half1_last);
+	eh__merge_sort_aux(aux, array, num_digits, half2_first, half2_last);
 
 	i32 ptr1 = half1_first;
 	i32 ptr2 = half2_first;
@@ -131,7 +143,8 @@ void eh__merge_sort_aux(
 				sizeof(PartialJoin) * (half1_last - ptr1 + 1));
 			break;
 		}else{
-			if(aux[ptr1].hash_digits[0] < aux[ptr2].hash_digits[0]){
+			if(eh__digits_cmp_less(aux[ptr1].hash_digits,
+					aux[ptr2].hash_digits, num_digits)){
 				array[ptr] = aux[ptr1];
 				ptr1 += 1;
 				ptr += 1;
@@ -145,8 +158,8 @@ void eh__merge_sort_aux(
 }
 
 static
-void eh_merge_sort(PartialJoin *array, PartialJoin *aux, i32 num){
-	eh__merge_sort_aux(array, aux, 0, num - 1);
+void eh_merge_sort(PartialJoin *array, PartialJoin *aux, i32 num_digits, i32 num){
+	eh__merge_sort_aux(array, aux, num_digits, 0, num - 1);
 }
 
 static
@@ -264,7 +277,7 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
 		LOG("digit %d - start\n", digit);
 
-		eh_merge_sort(partial, aux, num_partial);
+		eh_merge_sort(partial, aux, 1, num_partial);
 
 		LOG("digit %d - sorted\n", digit);
 	
@@ -297,14 +310,9 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 		memcpy(partial, aux, num_partial * sizeof(PartialJoin));
 	}
 
-	// TODO: We should fix the sorting method here to consider both
-	// digits at this stage. We can still find the solution with the
-	// block we're currently testing but this may cause us to miss
-	// solutions in other cases.
-
 	LOG("last two digits - start\n");
 
-	eh_merge_sort(partial, aux, num_partial);
+	eh_merge_sort(partial, aux, 2, num_partial);
 
 	LOG("last two digits - sorted\n");
 
