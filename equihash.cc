@@ -275,12 +275,8 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 	}
 
 	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
-		LOG("digit %d - start\n", digit);
-
+		LOG("digit %d\n", digit);
 		eh_merge_sort(partial, aux, 1, num_partial);
-
-		LOG("digit %d - sorted\n", digit);
-	
 		i32 num_aux = 0;
 		for(i32 i = 0; i < (num_partial - 1);){
 			// NOTE: The list is sorted so we only need to check subsequent
@@ -302,20 +298,12 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 			}
 			i += j;
 		}
-
-		LOG("digit %d - end (num_partial = %d, num_aux = %d)\n",
-			digit, num_partial, num_aux);
-
 		num_partial = num_aux;
 		memcpy(partial, aux, num_partial * sizeof(PartialJoin));
 	}
 
-	LOG("last two digits - start\n");
-
+	LOG("last two digits\n");
 	eh_merge_sort(partial, aux, 2, num_partial);
-
-	LOG("last two digits - sorted\n");
-
 	i32 num_sols = 0;
 	for(i32 i = 0; i < num_partial;){
 		i32 j = 1;

@@ -138,9 +138,10 @@ void btcz_state_add_nonce(blake2b_state *state, u256 nonce){
 
 static
 void btcz_nonce_init(MiningParams *params, u256 *nonce){
-	// TODO: Maybe use a random value to initialize the
-	// nonce2 part.
 	*nonce = params->nonce1;
+	srand(params->time);
+	for(i32 i = params->nonce1_bytes; i < 32; i += 1)
+		nonce->data[i] = ((u32)rand() << 16) | ((u32)rand() << 0);
 }
 
 static
@@ -196,7 +197,7 @@ int main(int argc, char **argv){
 			// solve the equihash
 			EH_Solution sols[8];
 			i32 max_sols = NARRAY(sols);
-			i32 num_sols = eh_solve(&base_state, sols, max_sols);
+			i32 num_sols = eh_solve(&cur_state, sols, max_sols);
 			if(num_sols > max_sols){
 				LOG("missed %d solutions (max_sols = %d, num_sols = %d)\n",
 					(num_sols - max_sols), max_sols, num_sols);
@@ -206,10 +207,12 @@ int main(int argc, char **argv){
 			// submit results
 			LOG("num_sols = %d\n", num_sols);
 			for(i32 i = 0; i < num_sols; i += 1){
-				if(!btcz_check_pow_target(&params, nonce, sols[i])){
-					LOG("sol %d: pow above target\n", i);
+				bool is_eh_solution = eh_check_solution(&cur_state, &sols[i]);
+				bool is_above_pow_target = !btcz_check_pow_target(&params, nonce, sols[i]);
+				LOG("sol %d: is_eh_solution = %s, is_above_pow_target = %s\n",
+					i, is_eh_solution ? "yes" : "no", is_above_pow_target ? "yes" : "yes");
+				if(is_above_pow_target)
 					continue;
-				}
 				LOG("sending sol %d...\n", i);
 				if(!btcz_stratum_submit_solution(S, &params, nonce, sols[i]))
 					LOG_ERROR("failed to submit solution %d\n", i);

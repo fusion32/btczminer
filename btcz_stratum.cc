@@ -38,6 +38,8 @@ struct STRATUM{
 	i32 num_recv_command_set_target;
 	i32 num_recv_command_notify;
 
+	bool connection_closed;
+	bool connection_error;
 	bool update_params;
 	MiningParams params;
 };
@@ -143,6 +145,8 @@ bool send_command_subscribe(STRATUM *S, const char *user_agent,
 	if(ret <= 0){
 		LOG_ERROR("send failed (ret = %d, error = %d)\n",
 			ret, WSAGetLastError());
+		S->connection_closed = (ret == 0);
+		S->connection_error = (ret < 0);
 		return false;
 	}
 
@@ -172,6 +176,8 @@ bool send_command_authorize(STRATUM *S,
 	if(ret <= 0){
 		LOG_ERROR("send failed (ret = %d, error = %d)\n",
 			ret, WSAGetLastError());
+		S->connection_closed = (ret == 0);
+		S->connection_error = (ret < 0);
 		return false;
 	}
 
@@ -214,6 +220,8 @@ bool send_command_submit(
 	if(ret <= 0){
 		LOG_ERROR("send failed (ret = %d, error = %d)\n",
 			ret, WSAGetLastError());
+		S->connection_closed = (ret == 0);
+		S->connection_error = (ret < 0);
 		return false;
 	}
 
@@ -409,12 +417,15 @@ bool inbound_data(SOCKET s){
 }
 
 static
-bool consume_messages(STRATUM *S){
+bool consume_messages_aux(STRATUM *S){
 	while(inbound_data(S->server)){
 		char buf[4096];
 		int ret = recv(S->server, buf, sizeof(buf), 0);
 		if(ret <= 0){
-			LOG_ERROR("recv failed (ret = %d)\n", ret);
+			LOG_ERROR("recv failed (ret = %d, error = %d)\n",
+				ret, WSAGetLastError());
+			S->connection_closed = (ret == 0);
+			S->connection_error = (ret < 0);
 			return false;
 		}
 
@@ -527,6 +538,28 @@ bool consume_messages(STRATUM *S){
 	return true;
 }
 
+static
+void consume_messages(STRATUM *S){
+	if(!consume_messages_aux(S) && (S->connection_closed || S->connection_error)){
+		if(S->connection_closed)
+			LOG("connection has been closed by the server\n");
+		if(S->connection_error)
+			LOG("connection error has occurred\n");
+
+		LOG("reconnecting...\n");
+		STRATUM *tmp = btcz_stratum_connect(
+			S->connect_addr, S->connect_port,
+			S->user, S->password, NULL);
+		if(!tmp){
+			LOG_ERROR("(FATAL) reconnect failed\n");
+			exit(-1);
+			return;
+		}
+		*S = *tmp;
+		free(tmp);
+	}
+}
+
 // ----------------------------------------------------------------
 // server thread
 // ----------------------------------------------------------------
@@ -552,8 +585,7 @@ bool handshake(STRATUM *S,
 			|| S->num_recv_response_authorize == 0
 			|| S->num_recv_command_set_target == 0
 			|| S->num_recv_command_notify == 0){
-		if(!consume_messages(S))
-			return false;
+		consume_messages(S);
 	}
 	return true;
 }
@@ -632,7 +664,12 @@ STRATUM *btcz_stratum_connect(
 		free(S);
 		return NULL;
 	}
-	*out_params = S->params;
+	if(out_params){
+		S->update_params = false;
+		*out_params = S->params;
+	}else{
+		S->update_params = true;
+	}
 	return S;
 }
 
@@ -645,18 +682,14 @@ bool btcz_stratum_submit_solution(
 
 	i32 prev = S->num_recv_response_submit;
 	while(prev == S->num_recv_response_submit){
-		if(!consume_messages(S))
-			return false;
+		consume_messages(S);
 	}
 	return true;
 }
 
 bool btcz_stratum_update_params(
 		STRATUM *S, MiningParams *out_params){
-	if(!consume_messages(S)){
-		LOG_ERROR("failed to consume server messages\n");
-		return false;
-	}
+	consume_messages(S);
 	if(S->update_params){
 		S->update_params = false;
 		*out_params = S->params;
