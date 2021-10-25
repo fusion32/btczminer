@@ -49,7 +49,6 @@ struct ServerResponse{
 	bool error_is_null;
 	i32 error_code;
 	char error_message[256];
-	//char error_traceback[256];
 };
 
 // ----------------------------------------------------------------
@@ -449,61 +448,54 @@ bool consume_messages_aux(STRATUM *S){
 					return false;
 
 				i32 response_id = (i32)tok.token_number;
+				const char *method = "unknown";
 				ServerResponse response;
-				if(response_id == S->subscribe_id){
-					// subscribe response
+				if(response_id == S->submit_id){
+					// NOTE: Since we only do "mining.subscribe" and "mining.authorize"
+					// at the beggining of the session, we'll be handling exclusively
+					// "mining.submit" responses so it only makes sense that it is
+					// checked first.
+					if(!parse_server_response_common_result(&json, &response)
+					|| !json_consume_token(&json, NULL, ',')
+					|| !json_consume_key(&json, "error")
+					|| !parse_server_response_error(&json, &response))
+						return false;
+					S->num_recv_response_submit += 1;
+					method = "mining.submit";
+				}else if(response_id == S->subscribe_id){
+					// NOTE: We don't add "S->update_params = true" in here
+					// because this message is sent to the server at the
+					// beggining of the session and it should be sent only
+					// once. It means that whenever we get the nonce1 from
+					// this response we won't need to update it until we
+					// disconnect or get disconnected.
 					if(!parse_server_response_subscribe_result(&json, &response, &S->params)
 					|| !json_consume_token(&json, NULL, ',')
 					|| !json_consume_key(&json, "error")
 					|| !parse_server_response_error(&json, &response))
 						return false;
-					if(!response.result){
-						if(response.error_is_null){
-							LOG_ERROR("\"mining.subscribe\" failed"
-								" without description of the error\n");
-						}else{
-							LOG_ERROR("\"mining.subscribe\" failed: (%d) %s\n",
-								response.error_code, response.error_message);
-						}
-						return false;
-					}
 					S->num_recv_response_subscribe += 1;
+					method = "mining.subscribe";
 				}else if(response_id == S->authorize_id){
-					// authorize response
 					if(!parse_server_response_common_result(&json, &response)
 					|| !json_consume_token(&json, NULL, ',')
 					|| !json_consume_key(&json, "error")
 					|| !parse_server_response_error(&json, &response))
 						return false;
-					if(!response.result){
-						if(response.error_is_null){
-							LOG_ERROR("\"mining.authorize\" failed"
-								" without description of the error\n");
-						}else{
-							LOG_ERROR("\"mining.authorize\" failed: (%d) %s\n",
-								response.error_code, response.error_message);
-						}
-						return false;
-					}
 					S->num_recv_response_authorize += 1;
-				}else if(response_id == S->submit_id){
-					if(!parse_server_response_common_result(&json, &response)
-					|| !json_consume_token(&json, NULL, ',')
-					|| !json_consume_key(&json, "error")
-					|| !parse_server_response_error(&json, &response))
-						return false;
-					if(!response.result){
-						if(response.error_is_null){
-							LOG_ERROR("\"mining.submit\" failed"
-								" without description of the error\n");
-						}else{
-							LOG_ERROR("\"mining.submit\" failed: (%d) %s\n",
-								response.error_code, response.error_message);
-						}
-						return false;
-					}
-					S->num_recv_response_submit += 1;
+					method = "mining.authorize";
 				}else{
+					return false;
+				}
+
+				if(!response.result){
+					if(response.error_is_null){
+						LOG_ERROR("\"%s\" failed without"
+							" description of the error\n", method);
+					}else{
+						LOG_ERROR("\"%s\" failed: (%d) %s\n", method,
+							response.error_code, response.error_message);
+					}
 					return false;
 				}
 			}else{
@@ -545,14 +537,14 @@ void consume_messages(STRATUM *S){
 			LOG("connection has been closed by the server\n");
 		if(S->connection_error)
 			LOG("connection error has occurred\n");
+		closesocket(S->server);
 
 		LOG("reconnecting...\n");
 		STRATUM *tmp = btcz_stratum_connect(
 			S->connect_addr, S->connect_port,
 			S->user, S->password, NULL);
 		if(!tmp){
-			LOG_ERROR("(FATAL) reconnect failed\n");
-			exit(-1);
+			FATAL_ERROR("reconnect failed\n");
 			return;
 		}
 		*S = *tmp;
@@ -681,9 +673,8 @@ bool btcz_stratum_submit_solution(
 		return false;
 
 	i32 prev = S->num_recv_response_submit;
-	while(prev == S->num_recv_response_submit){
+	while(prev == S->num_recv_response_submit)
 		consume_messages(S);
-	}
 	return true;
 }
 

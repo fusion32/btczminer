@@ -250,15 +250,15 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 	// the memory but requires extra steps on Windows with VirtualAlloc(MEM_COMMIT).
 
 	float extra_room = 1.05f; // 5% should work for now
-	i32 total_slots = (i32)(EH_DOMAIN * extra_room);
+	i32 total_slots = (i32)(EH_RANGE * extra_room);
 	PartialJoin *partial = (PartialJoin*)malloc(total_slots * sizeof(PartialJoin));
 	PartialJoin *aux = (PartialJoin*)malloc(total_slots * sizeof(PartialJoin));
 
 	i32 num_partial = 0;
-	for(i32 i = 0; num_partial < EH_DOMAIN; i += 1){
+	for(i32 i = 0; num_partial < EH_RANGE; i += 1){
 		u8 hash[EH_BLAKE_OUTLEN];
 		generate_hash(base_state, i, hash, EH_BLAKE_OUTLEN);
-		for(i32 j = 0; j < EH_HASHES_PER_BLAKE && num_partial < EH_DOMAIN; j += 1){
+		for(i32 j = 0; j < EH_HASHES_PER_BLAKE && num_partial < EH_RANGE; j += 1){
 			i32 index = num_partial++;
 			DEBUG_ASSERT((index / EH_HASHES_PER_BLAKE) == i);
 			DEBUG_ASSERT((index % EH_HASHES_PER_BLAKE) == j);

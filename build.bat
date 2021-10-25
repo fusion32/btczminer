@@ -6,7 +6,7 @@ pushd %~dp0
 @SET LINKER_LIBRARIES=shell32.lib ws2_32.lib
 @SET LINKER_FLAGS=-subsystem:console -incremental:no -opt:ref -dynamicbase %LINKER_LIBRARIES%
 
-@SET SRC="../blake2b.cc" "../btcz.cc" "../btcz_stratum.cc" "../common.cc" "../equihash.cc" "../json.cc" "../sha256.cc"
+@SET SRC="../blake2b.cc" "../btcz.cc" "../btcz_stratum.cc" "../common.cc" "../equihash2.cc" "../json.cc" "../sha256.cc"
 
 @REM @SET SRC="../proxy.cc"
 

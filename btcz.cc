@@ -1,23 +1,6 @@
 #include "common.hh"
 #include "buffer_util.hh"
 
-//#define BTCZ_SERIALIZED_EH_HEADER_BYTES 140
-//#define BTCZ_SERIALIZED_FULL_HEADER_BYTES 241
-
-
-#if 0
-struct JSON_BlockHeader{
-	i32 version;
-	const char *hash_prev_block;
-	const char *hash_merkle_root;
-	const char *hash_final_sapling_root;
-	u32 time;
-	u32 bits;
-	const char *nonce;
-	const char *equihash_solution;
-};
-#endif
-
 struct BlockHeader{
 	i32 version;
 	u256 hash_prev_block;
@@ -157,16 +140,11 @@ void btcz_nonce_increase(MiningParams *params, u256 *nonce){
 	}
 }
 
+#if 1
 int main(int argc, char **argv){
-	// NOTE: We're currently only figuring out the protocol and one
-	// of the BTCZ mining pools is https://btcz.darkfibermines.com/
-	// and it'll be the one we'll test the protocol.
-
-	// NOTE: Big endian is used for network byte order so whenever we
-	// use htons or htonl, we're actually converting from the cpu native
-	// byte order into big endian byte order. If the native byte order
-	// is already big endian, no convertion is done.
-
+	// NOTE: This is the address and port of the BTCZ mining pool
+	// https://btcz.darkfibermines.com/ and my personal BTCZ public
+	// address which I used for testing.
 	const char *connect_addr = "142.4.211.28";
 	const char *connect_port = "4000";
 	const char *user = "t1Rxx8pUgs29isFXV8mjDPuBbNf22SDqZGq";
@@ -210,7 +188,8 @@ int main(int argc, char **argv){
 				bool is_eh_solution = eh_check_solution(&cur_state, &sols[i]);
 				bool is_above_pow_target = !btcz_check_pow_target(&params, nonce, sols[i]);
 				LOG("sol %d: is_eh_solution = %s, is_above_pow_target = %s\n",
-					i, is_eh_solution ? "yes" : "no", is_above_pow_target ? "yes" : "yes");
+					i, is_eh_solution ? "yes" : "no",
+					is_above_pow_target ? "yes" : "no");
 				if(is_above_pow_target)
 					continue;
 				LOG("sending sol %d...\n", i);
@@ -218,9 +197,9 @@ int main(int argc, char **argv){
 					LOG_ERROR("failed to submit solution %d\n", i);
 			}
 
-			// the server updated our mining params so we should
-			// re-init the blake2b_state and the nonce with the
-			// new params
+			// NOTE: Check if the server updated our mining params and if
+			// so, we should re-initialize our blake2b state and nonce with
+			// the new params.
 			if(btcz_stratum_update_params(S, &params))
 				break;
 
@@ -230,3 +209,62 @@ int main(int argc, char **argv){
 	}
 	return 0;
 }
+
+#else
+
+void btcz_test_state_init(blake2b_state *state){
+	// block = 818128
+	u32 version = 4;
+	char *prev_hash_hex = "0000007b753e415f80614ba8130aa4668ca4731b0539d9919c2074b43a46b9e8";
+	char *merkle_root_hex = "6b2198b49e2055535c403830a3c124a8c235004b4662901010bc0927c43979ec";
+	char *final_sapling_root_hex = "189df3ceb26643f3b90ec7059316c7ccb26aeaf1e96559c63b8c6d52f04e79b5";
+	u32 time = 1632007626;
+	u32 bits = 0x1e009cb8;
+	char *nonce_hex = "81b601c200000000000000006dcdf558dd65a0dd9e68012952b8df1003cefade";
+
+	DEBUG_ASSERT(count_hex_digits(prev_hash_hex) == 64);
+	DEBUG_ASSERT(count_hex_digits(merkle_root_hex) == 64);
+	DEBUG_ASSERT(count_hex_digits(final_sapling_root_hex) == 64);
+	DEBUG_ASSERT(count_hex_digits(nonce_hex) == 64);
+
+	u8 buf[140];
+	serialize_u32(buf + 0x00, version);
+	serialize_u256(buf + 0x04, hex_be_to_u256(prev_hash_hex));
+	serialize_u256(buf + 0x24, hex_be_to_u256(merkle_root_hex));
+	serialize_u256(buf + 0x44, hex_be_to_u256(final_sapling_root_hex));
+	serialize_u32(buf + 0x64, time);
+	serialize_u32(buf + 0x68, bits);
+	serialize_u256(buf + 0x6C, hex_be_to_u256(nonce_hex));
+
+	blake2b_init_eh(state, EH_PERSONAL, EH_N, EH_K);
+	blake2b_update(state, buf, 140);
+}
+
+int main(int argc, char **argv){
+	LOG("BTCZ TEST\n");
+
+	blake2b_state state;
+	btcz_test_state_init(&state);
+
+	// solve the equihash
+	EH_Solution sols[8];
+	i32 max_sols = NARRAY(sols);
+	i32 num_sols = eh_solve(&state, sols, max_sols);
+	if(num_sols > max_sols){
+		LOG("missed %d solutions (max_sols = %d, num_sols = %d)\n",
+			(num_sols - max_sols), max_sols, num_sols);
+		num_sols = max_sols;
+	}
+
+	// submit results
+	LOG("num_sols = %d\n", num_sols);
+	for(i32 i = 0; i < num_sols; i += 1){
+		bool is_eh_solution = eh_check_solution(&state, &sols[i]);
+		LOG("sol %d: is_eh_solution = %s\n",
+			i, is_eh_solution ? "yes" : "no");
+		print_buf("sol", sols[i].packed, EH_PACKED_SOLUTION_BYTES);
+	}
+	return 0;
+}
+
+#endif

@@ -75,6 +75,18 @@ typedef size_t		usize;
 #define LOG(...)		fprintf(stdout, __FUNCTION__ ": " __VA_ARGS__)
 #define LOG_ERROR(...)	fprintf(stdout, __FUNCTION__ ": " __VA_ARGS__)
 
+static INLINE
+void fatal_error(const char *fmt, ...){
+	fprintf(stdout, "==== FATAL ERROR ====\n");
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	exit(-1);
+}
+
+#define FATAL_ERROR(...) fatal_error(__FUNCTION__ ": " __VA_ARGS__)
+
 // ----------------------------------------------------------------
 // Utility - common.cc
 // ----------------------------------------------------------------
@@ -193,7 +205,7 @@ u256 wsha256(u8 *in, i32 inlen);
 #define EH_SOLUTION_INDICES		(1 << EH_K)
 #define EH_PACKED_SOLUTION_BYTES (BITS_TO_BYTES(EH_SOLUTION_INDEX_BITS * EH_SOLUTION_INDICES))
 
-#define EH_DOMAIN				(1 << EH_SOLUTION_INDEX_BITS)
+#define EH_RANGE				(1 << EH_SOLUTION_INDEX_BITS)
 
 // NOTE: This value is constant for any parameters of the equihash.
 // Also note that this is an average value which means the actual
