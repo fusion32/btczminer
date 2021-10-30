@@ -692,10 +692,8 @@ bool btcz_stratum_update_params(
 struct WSAInit{
 	WSAInit(void){
 		WSADATA dummy;
-		if(WSAStartup(MAKEWORD(2, 2), &dummy) != 0){
-			LOG_ERROR("failed to initialize windows sockets\n");
-			abort();
-		}
+		if(WSAStartup(MAKEWORD(2, 2), &dummy) != 0)
+			FATAL_ERROR("failed to initialize windows sockets\n");
 	}
 	~WSAInit(void){
 		WSACleanup();

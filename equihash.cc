@@ -275,7 +275,7 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 	}
 
 	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
-		LOG("digit %d\n", digit);
+		LOG("digit %d: %d\n", digit, num_partial);
 		eh_merge_sort(partial, aux, 1, num_partial);
 		i32 num_aux = 0;
 		for(i32 i = 0; i < (num_partial - 1);){
@@ -302,7 +302,7 @@ i32 eh_solve(blake2b_state *base_state, EH_Solution *sol_buffer, i32 max_sols){
 		memcpy(partial, aux, num_partial * sizeof(PartialJoin));
 	}
 
-	LOG("last two digits\n");
+	LOG("last two digits: %d\n", num_partial);
 	eh_merge_sort(partial, aux, 2, num_partial);
 	i32 num_sols = 0;
 	for(i32 i = 0; i < num_partial;){

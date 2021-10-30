@@ -122,14 +122,6 @@ void eh_generate_blake(blake2b_state *base_state,
 }
 
 static
-EH_Slot *eh_push_bucket_slot(EH_Slot *slots, i32 *num_bucket_slots, i32 bucket_id){
-	i32 slot_id = atomic_add(&num_bucket_slots[bucket_id], 1);
-	if(slot_id >= EH_MAX_BUCKET_SLOTS)
-		return NULL;
-	return slots + bucket_id * EH_MAX_BUCKET_SLOTS + slot_id;
-}
-
-static
 EH_Slot *eh_get_bucket(EH_Slot *slots, i32 bucket_id){
 	return slots + bucket_id * EH_MAX_BUCKET_SLOTS;
 }
@@ -137,10 +129,17 @@ EH_Slot *eh_get_bucket(EH_Slot *slots, i32 bucket_id){
 static
 i32 eh_get_num_bucket_slots(i32 *num_bucket_slots, i32 bucket_id){
 	i32 result = atomic_exchange(&num_bucket_slots[bucket_id], 0);
-	//LOG("bucket_id = %d, num_slots = %d\n", bucket_id, result);
 	if(result > EH_MAX_BUCKET_SLOTS)
 		result = EH_MAX_BUCKET_SLOTS;
 	return result;
+}
+
+static
+EH_Slot *eh_push_bucket_slot(EH_Slot *slots, i32 *num_bucket_slots, i32 bucket_id){
+	i32 slot_id = atomic_add(&num_bucket_slots[bucket_id], 1);
+	if(slot_id >= EH_MAX_BUCKET_SLOTS)
+		return NULL;
+	return slots + bucket_id * EH_MAX_BUCKET_SLOTS + slot_id;
 }
 
 static
@@ -263,7 +262,6 @@ void eh_solve_one(EH_State *eh, i32 thread_id,
 
 		qsort(slots, num_slots, sizeof(EH_Slot), eh_slot_cmp_1);
 
-		i32 num_collisions = 0;
 		for(i32 i = 0; i < (num_slots - 1);){
 			i32 j = 1;
 			while((i + j) < num_slots
@@ -273,8 +271,11 @@ void eh_solve_one(EH_State *eh, i32 thread_id,
 
 			for(i32 m = 0; m < (j - 1); m += 1){
 				for(i32 n = m + 1; n < j; n += 1){
-					if(eh_distinct_indices(&slots[i + m], &slots[i + n])){
-						num_collisions += 1;
+					// NOTE: Checking if all indices are distinct here is
+					// probably a waste of time. Checking the first index
+					// of each slot will suffice since there is already an
+					// implicit ordering of the indices.
+					if(slots[i + m].indices[0] != slots[i + n].indices[0]){
 						EH_Slot join_result = eh_partial_join(&slots[i + m], &slots[i + n]);
 						i32 out_bucket_id = join_result.hash_digits[0] & EH_BUCKET_MASK;
 						EH_Slot *out_slot = eh_push_bucket_slot(output_slots,
@@ -485,50 +486,46 @@ bool eh_check_solution(blake2b_state *base_state, EH_Solution *solution){
 		solution->packed, EH_PACKED_SOLUTION_BYTES,
 		indices, EH_SOLUTION_INDICES);
 
-	EH_Slot slots[EH_SOLUTION_INDICES];
+	// check for duplicate indices only once
+	for(i32 i = 0; i < EH_SOLUTION_INDICES; i += 1){
+		for(i32 j = i + 1; j < EH_SOLUTION_INDICES; j += 1){
+			if(indices[i] == indices[j])
+				return false;
+		}
+	}
+
+	// generate hashes
+	struct{
+		u32 hash_digits[EH_HASH_DIGITS];
+	}slots[EH_SOLUTION_INDICES];
 	for(i32 i = 0; i < EH_SOLUTION_INDICES; i += 1){
 		u8 blake[EH_BLAKE_OUTLEN];
-
 		i32 j = indices[i] / EH_HASHES_PER_BLAKE;
 		i32 k = indices[i] % EH_HASHES_PER_BLAKE;
-
 		eh_generate_blake(base_state, j, blake, EH_BLAKE_OUTLEN);
-
-		slots[i].num_hash_digits = EH_HASH_DIGITS;
 		unpack_uints(EH_HASH_DIGIT_BITS,
 			blake + k * EH_HASH_BYTES, EH_HASH_BYTES,
 			slots[i].hash_digits, EH_HASH_DIGITS);
-
-		slots[i].num_indices = 1;
-		slots[i].indices[0] = indices[i];
 	}
 
-	i32 num_slots = EH_SOLUTION_INDICES;
-	EH_Slot aux[EH_SOLUTION_INDICES];
-	for(i32 digit = 0; digit < (EH_HASH_DIGITS - 2); digit += 1){
-		i32 num_aux = 0;
-		for(i32 i = 0; i < num_slots; i += 2){
-			if(!(slots[i].hash_digits[0] == slots[i + 1].hash_digits[0]))
+	for(i32 round = 0; round < (EH_K - 1); round += 1){
+		i32 step = 1 << round;
+		for(i32 i = 0; i < EH_SOLUTION_INDICES; i += 2 * step){
+			for(i32 j = 0; j < EH_HASH_DIGITS; j += 1){
+				slots[i].hash_digits[j] ^=
+					slots[i + step].hash_digits[j];
+			}
+			if(slots[i].hash_digits[0] != 0)
 				return false;
-			if(!eh_distinct_indices(&slots[i], &slots[i + 1]))
+			if(indices[i] > indices[i + step])
 				return false;
-			if(!(slots[i].indices[0] < slots[i + 1].indices[0]))
-				return false;
-			aux[num_aux++] = eh_partial_join(&slots[i], &slots[i + 1]);
 		}
-
-		DEBUG_ASSERT(num_aux == (num_slots / 2));
-		num_slots = num_aux;
-		memcpy(slots, aux, num_aux * sizeof(EH_Slot));
 	}
 
-	DEBUG_ASSERT(num_slots == 2);
-	if(!(slots[0].hash_digits[0] == slots[1].hash_digits[0])
-	  && !(slots[0].hash_digits[1] == slots[1].hash_digits[1]))
+	if(slots[0].hash_digits[0] != slots[16].hash_digits[0]
+	|| slots[0].hash_digits[1] != slots[16].hash_digits[1])
 		return false;
-	if(!eh_distinct_indices(&slots[0], &slots[1]))
-		return false;
-	if(!(slots[0].indices[0] < slots[1].indices[0]))
+	if(indices[0] > indices[16])
 		return false;
 
 	return true;
