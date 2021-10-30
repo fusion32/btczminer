@@ -28,13 +28,15 @@
 //
 //	Note that in the case of BTCZ we have 24 bits hash digits, so we'd have
 // EH_BUCKET_BITS = 20, EH_OTHER_BITS = 4, EH_SLOT_BITS = 6. This may be a
-// problem because with so little other bits we are more likely to hit edge
-// some statistical edge cases.
+// problem because with so little other bits we are more likely to hit some
+// statistical edge cases.
 //	We could improve these numbers by using cantor pairing which is used in
 // the tromp implementation but in the NOTE below I'll discuss another method.
 //
 
-// This will make us discard more collisions but will consume a lot less memory.
+// This will make us discard more collisions but will consume a lot less memory
+// and will be a little faster (haven't measured but it seems to be faster and
+// it makes sense because the program requires less bandwidth).
 //#define EH_SLOT_BITS			(EH_OTHER_BITS + 1)
 
 #define EH_SLOT_BITS			(EH_OTHER_BITS + 2)
@@ -91,7 +93,7 @@
 // if we want to have less bucket_bits, we'll need more than only 32 bits for
 // a back reference.
 //
-//	So what we are gonna do, is use the undefined elements we saw in the
+//	So what we are gonna do, is to use the undefined elements we saw in the
 // visualization to address this problem. It won't cost any extra memory and
 // will allow us to arbitrarily (not really) choose the number of bucket_bits.
 //
@@ -117,6 +119,8 @@ struct EH_State{
 	i32 num_threads;
 
 	i32 *num_slots_taken[2];
+	// TODO: Maybe this should be called "slot_pool" or
+	// something instead of only "slots".
 	EH_Slot *slots[2];
 
 	i32 max_sols;
@@ -384,14 +388,14 @@ void eh_solve_init(EH_State *eh, i32 thread_id,
 				hash_digits, EH_HASH_DIGITS);
 
 			i32 bucket_id = hash_digits[0] & EH_BUCKET_MASK;
-			EH_Slot *slot = eh_push_slot(output_slots,
+			EH_Slot *out_slot = eh_push_slot(output_slots,
 					output_num_slots_taken, bucket_id);
-			if(!slot){
+			if(!out_slot){
 				atomic_add(&eh->num_discarded_hashes, 1);
 				continue;
 			}
-			memcpy(slot->data, hash_digits, sizeof(hash_digits));
-			slot->data[EH_HASH_DIGITS] = index;
+			memcpy(out_slot->data, hash_digits, sizeof(hash_digits));
+			out_slot->data[EH_HASH_DIGITS] = index;
 		}
 	}
 }
@@ -436,20 +440,20 @@ void eh_solve_one(EH_State *eh, i32 round, i32 thread_id,
 	for(i32 bucket_id = thread_id;
 			bucket_id < EH_NUM_BUCKETS;
 			bucket_id += eh->num_threads){
-		EH_Slot *slots = eh_get_bucket(input_slots, bucket_id);
-		i32 num_slots = eh_get_num_slots_taken(
+		EH_Slot *bucket = eh_get_bucket(input_slots, bucket_id);
+		i32 num_slots_taken = eh_get_num_slots_taken(
 				input_num_slots_taken, bucket_id);
 
 		EH_Collisions collisions;
 		eh_collisions_init(&collisions);
-		for(i32 s0 = 0; s0 < num_slots; s0 += 1){
+		for(i32 s0 = 0; s0 < num_slots_taken; s0 += 1){
 			i32 s1 = eh_collisions_insert_slot(&collisions, s0,
-				(slots[s0].data[0] >> EH_BUCKET_BITS));
+				(bucket[s0].data[0] >> EH_BUCKET_BITS));
 			for(; s1 >= 0; s1 = eh_collisions_next_slot(&collisions, s1)){
-				if(eh_same_ancestor(round, &slots[s0], &slots[s1]))
+				if(eh_same_ancestor(round, &bucket[s0], &bucket[s1]))
 					continue;
 				EH_Slot tmp = eh_join(round,
-					&slots[s0], &slots[s1], bucket_id, s0, s1);
+					&bucket[s0], &bucket[s1], bucket_id, s0, s1);
 				i32 out_bucket_id = tmp.data[0] & EH_BUCKET_MASK;
 				EH_Slot *out_slot = eh_push_slot(output_slots,
 						output_num_slots_taken, out_bucket_id);
@@ -469,26 +473,26 @@ void eh_solve_last(EH_State *eh, i32 thread_id,
 	for(i32 bucket_id = thread_id;
 			bucket_id < EH_NUM_BUCKETS;
 			bucket_id += eh->num_threads){
-		EH_Slot *slots = eh_get_bucket(input_slots, bucket_id);
-		i32 num_slots = eh_get_num_slots_taken(
+		EH_Slot *bucket = eh_get_bucket(input_slots, bucket_id);
+		i32 num_slots_taken = eh_get_num_slots_taken(
 				input_num_slots_taken, bucket_id);
 
 		EH_Collisions collisions;
 		eh_collisions_init(&collisions);
-		for(i32 s0 = 0; s0 < num_slots; s0 += 1){
+		for(i32 s0 = 0; s0 < num_slots_taken; s0 += 1){
 			i32 s1 = eh_collisions_insert_slot(&collisions, s0,
-				(slots[s0].data[0] >> EH_BUCKET_BITS));
+				(bucket[s0].data[0] >> EH_BUCKET_BITS));
 			for(; s1 >= 0; s1 = eh_collisions_next_slot(&collisions, s1)){
 				// NOTE: EH_Collisions will check for collisions on the first
 				// hash digit but we still need to check the second hash digit.
-				if(slots[s0].data[1] != slots[s1].data[1])
+				if(bucket[s0].data[1] != bucket[s1].data[1])
 					continue;
 
-				if(eh_same_ancestor(EH_LAST_ROUND, &slots[s0], &slots[s1]))
+				if(eh_same_ancestor(EH_LAST_ROUND, &bucket[s0], &bucket[s1]))
 					continue;
 
 				u32 sol_indices[EH_SOLUTION_INDICES];
-				if(eh_get_distinct_indices(eh, &slots[s0], &slots[s1], sol_indices)){
+				if(eh_get_distinct_indices(eh, &bucket[s0], &bucket[s1], sol_indices)){
 					EH_Solution *out_sol = eh_push_solution(eh);
 					if(out_sol){
 						pack_uints(EH_SOLUTION_INDEX_BITS,
